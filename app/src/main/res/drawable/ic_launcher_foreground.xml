@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Globe réseau stylisé : 3 nœuds reliés -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,30 a10,10 0 1 0 0,20 a10,10 0 1 0 0,-20 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M30,68 a9,9 0 1 0 0,18 a9,9 0 1 0 0,-18 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M78,68 a9,9 0 1 0 0,18 a9,9 0 1 0 0,-18 Z" />
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="5"
+        android:pathData="M56,48 L38,66 M52,48 L70,66 M38,70 L62,70" />
+</vector>
