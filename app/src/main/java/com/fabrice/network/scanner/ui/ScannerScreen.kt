@@ -54,6 +54,8 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.fabrice.network.scanner.BuildConfig
 import com.fabrice.network.scanner.CsvExporter
+import com.fabrice.network.scanner.CveDatabaseStore
+import com.fabrice.network.scanner.CveEntry
 import com.fabrice.network.scanner.Device
 import com.fabrice.network.scanner.DeviceStore
 import com.fabrice.network.scanner.DeviceType
@@ -62,6 +64,7 @@ import com.fabrice.network.scanner.NetworkScanner
 import com.fabrice.network.scanner.OuiDatabase
 import com.fabrice.network.scanner.PortScanner
 import com.fabrice.network.scanner.ScanHistory
+import com.fabrice.network.scanner.VulnScanner
 import com.fabrice.network.scanner.WakeOnLan
 import kotlinx.coroutines.launch
 import java.io.File
@@ -91,6 +94,9 @@ fun ScannerScreen() {
     var scanCount by remember { mutableStateOf(0) }
     // Onglet actif : 0 = Périphériques, 1 = Réseau
     var selectedTab by remember { mutableStateOf(0) }
+    // Vulnérabilités par IP (calculées après chaque scan, base CVE embarquée)
+    var vulnsByIp by remember { mutableStateOf<Map<String, VulnScanner.DeviceVulns>>(emptyMap()) }
+    var cveDbVersion by remember { mutableStateOf<String?>(null) }
 
     fun runScan() {
         scope.launch {
@@ -101,6 +107,9 @@ fun ScannerScreen() {
             newKeys = emptySet()
             selfIp = NetworkScanner.detectSubnet()?.first
             val oui = OuiDatabase.load(context)
+            // Base CVE embarquée pour le scan de vulnérabilités (CISA KEV + NVD)
+            val cveDb = CveDatabaseStore.load(context)
+            cveDbVersion = cveDb.generated.ifBlank { null }
             // Cache persistant des fabricants résolus en ligne (par préfixe OUI).
             val vendorPrefs = context.getSharedPreferences("vendor_cache", Context.MODE_PRIVATE)
             val result = try {
@@ -122,6 +131,11 @@ fun ScannerScreen() {
                 }
                 historyStore.save(result)
             }
+            // Scan de vulnérabilités : banner → produit/version → matching CVE
+            vulnsByIp = result.associate { device ->
+                val services = VulnScanner.parseBanner(device.banner)
+                device.ip to VulnScanner.match(services, cveDb)
+            }
             devices = result
             scanning = false
             scanCount++
@@ -135,7 +149,7 @@ fun ScannerScreen() {
                 title = { Text("Scan Réseau") },
                 actions = {
                     if (devices.isNotEmpty() && !scanning) {
-                        TextButton(onClick = { exportCsv(context, devices) }) {
+                        TextButton(onClick = { exportCsv(context, devices, vulnsByIp) }) {
                             Text("📤 Export")
                         }
                     }
@@ -247,11 +261,13 @@ fun ScannerScreen() {
                         val key = ScanHistory.identityKey(device)
                         // Lecture du tick pour recomposer après renommage/favori
                         @Suppress("UNUSED_EXPRESSION") refreshTick
+                        val vulns = vulnsByIp[device.ip]
                         DeviceCard(
                             device = device,
                             displayName = deviceStore.displayName(device),
                             isFavorite = deviceStore.isFavorite(key),
                             isNew = key in newKeys,
+                            vulns = vulns,
                             onClick = { selected = device }
                         )
                     }
@@ -267,6 +283,7 @@ fun ScannerScreen() {
             device = device,
             store = deviceStore,
             isNew = key in newKeys,
+            vulns = vulnsByIp[device.ip],
             onDismiss = { selected = null },
             onSaved = { refreshTick++ },
             onWol = {
@@ -319,6 +336,7 @@ private fun DeviceCard(
     displayName: String,
     isFavorite: Boolean,
     isNew: Boolean,
+    vulns: VulnScanner.DeviceVulns?,
     onClick: () -> Unit
 ) {
     Card(
@@ -407,8 +425,33 @@ private fun DeviceCard(
                     Spacer(Modifier.height(2.dp))
                     SelfBadge()
                 }
+                vulns?.let { v ->
+                    if (!v.isEmpty) {
+                        Spacer(Modifier.height(2.dp))
+                        VulnBadge(v)
+                    }
+                }
             }
         }
+    }
+}
+
+/** Badge vulnérabilité : score + label, rouge si critique/élevé. */
+@Composable
+private fun VulnBadge(v: VulnScanner.DeviceVulns) {
+    val critical = v.score >= 50
+    val bg = if (critical) Color(0xFFB3261E) else Color(0xFFC9972B)
+    Box(
+        modifier = Modifier
+            .background(bg, RoundedCornerShape(4.dp))
+            .padding(horizontal = 4.dp, vertical = 1.dp)
+    ) {
+        Text(
+            "⚠ ${v.label} (${v.total})",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White,
+            fontWeight = FontWeight.Bold
+        )
     }
 }
 
@@ -468,6 +511,7 @@ private fun DeviceDialog(
     device: Device,
     store: DeviceStore,
     isNew: Boolean,
+    vulns: VulnScanner.DeviceVulns?,
     onDismiss: () -> Unit,
     onSaved: () -> Unit,
     onWol: () -> Unit
@@ -518,6 +562,19 @@ private fun DeviceDialog(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+                    }
+                }
+                vulns?.let { v ->
+                    if (!v.isEmpty) {
+                        Spacer(Modifier.height(12.dp))
+                        VulnSection(v)
+                    } else if (v.services.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "🛡️ Aucune CVE connue pour ce service",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
                 Spacer(Modifier.height(12.dp))
@@ -575,14 +632,92 @@ private fun InfoRow(label: String, value: String) {
     }
 }
 
+/** Section vulnérabilités dans la fiche appareil (scan CERT/KEV). */
+@Composable
+private fun VulnSection(v: VulnScanner.DeviceVulns) {
+    val scoreColor = when {
+        v.score >= 75 -> Color(0xFFB3261E)
+        v.score >= 50 -> Color(0xFFD84315)
+        v.score >= 25 -> Color(0xFFC9972B)
+        else -> Color(0xFF2E7D32)
+    }
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("🛡️ Vulnérabilités", style = MaterialTheme.typography.labelMedium)
+            Spacer(Modifier.weight(1f))
+            Text(
+                "score ${v.score}/100",
+                style = MaterialTheme.typography.labelMedium,
+                color = scoreColor,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Text(
+            "Risque : ${v.label}" +
+                if (v.kevCount > 0) " · ${v.kevCount} activement exploitée(s)" else "",
+            style = MaterialTheme.typography.bodySmall,
+            color = scoreColor
+        )
+        Spacer(Modifier.height(6.dp))
+        v.cves.take(6).forEach { cve ->
+            Row(Modifier.padding(vertical = 3.dp)) {
+                Text(
+                    cve.id,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.width(140.dp)
+                )
+                Text(
+                    sevLabel(cve) + (if (cve.kev) " ⚡" else ""),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = sevColor(cve.severity)
+                )
+            }
+            if (cve.description.isNotBlank()) {
+                Text(
+                    cve.description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        if (v.cves.size > 6) {
+            Text(
+                "+${v.cves.size - 6} autres…",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+private fun sevLabel(cve: CveEntry): String =
+    "${cve.severity}" + (cve.cvss?.let { " (${it})" } ?: "")
+
+private fun sevColor(sev: String): Color = when (sev) {
+    "CRITICAL" -> Color(0xFFB3261E)
+    "HIGH" -> Color(0xFFD84315)
+    "MEDIUM" -> Color(0xFFC9972B)
+    "LOW" -> Color(0xFF2E7D32)
+    else -> Color(0xFF616161)
+}
+
 /** Exporte le scan en CSV (BOM UTF-8, séparateur ;) et ouvre le partage. */
-private fun exportCsv(context: Context, devices: List<Device>) {
+private fun exportCsv(
+    context: Context,
+    devices: List<Device>,
+    vulnsByIp: Map<String, VulnScanner.DeviceVulns> = emptyMap()
+) {
     val dir = File(context.filesDir, "exports").apply { mkdirs() }
     val file = File(
         dir,
         "scan_reseau_v${BuildConfig.VERSION_NAME}_${System.currentTimeMillis()}.csv"
     )
-    file.writeText(CsvExporter.buildCsv(devices), Charsets.UTF_8)
+    file.writeText(CsvExporter.buildCsv(devices, vulnsByIp), Charsets.UTF_8)
 
     val uri: Uri = FileProvider.getUriForFile(
         context,

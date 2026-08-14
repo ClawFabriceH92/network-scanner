@@ -12,8 +12,8 @@ android {
         applicationId = "com.fabrice.network.scanner"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "0.2.8"
+        versionCode = 10
+        versionName = "0.3.0"
     }
 
     buildTypes {
@@ -57,4 +57,5 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

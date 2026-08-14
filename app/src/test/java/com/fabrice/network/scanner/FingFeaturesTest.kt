@@ -63,6 +63,28 @@ class FingFeaturesTest {
         assertTrue(csv.contains("\"Vendor; Inc\""))
     }
 
+    @Test
+    fun csv_includesVulnerabilitiesColumn() {
+        val vulns = VulnScanner.DeviceVulns(
+            services = listOf(VulnScanner.Service("nginx", "1.18.0", "Server: nginx/1.18.0")),
+            cves = listOf(
+                CveEntry("CVE-2021-23017", "nginx", "CRITICAL", 9.8, "desc", kev = true, ransomware = false, ranges = emptyList())
+            ),
+            score = 60,
+            label = "Élevé",
+            criticalCount = 1,
+            highCount = 0,
+            kevCount = 1
+        )
+        val csv = CsvExporter.buildCsv(
+            listOf(Device(ip = "192.168.0.5")),
+            mapOf("192.168.0.5" to vulns)
+        )
+        assertTrue(csv.contains("Vulnérabilités;Score"))
+        assertTrue(csv.contains("CVE-2021-23017"))
+        assertTrue(csv.contains("Élevé (60/100)"))
+    }
+
     // ---------- ScanHistory ----------
 
     @Test
