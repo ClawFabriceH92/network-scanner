@@ -97,8 +97,10 @@ fun ScannerScreen() {
             newKeys = emptySet()
             selfIp = NetworkScanner.detectSubnet()?.first
             val oui = OuiDatabase.load(context)
+            // Cache persistant des fabricants résolus en ligne (par préfixe OUI).
+            val vendorPrefs = context.getSharedPreferences("vendor_cache", Context.MODE_PRIVATE)
             val result = try {
-                NetworkScanner.scan(oui, scanPorts = true) { done, total -> progress = done }
+                NetworkScanner.scan(oui, scanPorts = true, prefs = vendorPrefs) { done, total -> progress = done }
             } catch (e: Exception) {
                 error = e.message ?: "Erreur inconnue"
                 emptyList()

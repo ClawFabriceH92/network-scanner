@@ -109,13 +109,6 @@ fun NetworkPanel() {
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Medium
                 )
-                if (rssi != Int.MIN_VALUE) {
-                    Text(
-                        "  ·  bouge avec toi pour voir le signal varier",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
             }
 
             Spacer(Modifier.height(12.dp))

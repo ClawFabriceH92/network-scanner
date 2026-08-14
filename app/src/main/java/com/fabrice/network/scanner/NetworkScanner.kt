@@ -1,5 +1,6 @@
 package com.fabrice.network.scanner
 
+import android.content.SharedPreferences
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.NetworkInterface
@@ -30,9 +31,12 @@ data class PingResult(val alive: Boolean, val ttl: Int?)
  * 1. Détection du sous-réseau (NetworkInterface + masque)
  * 2. Ping sweep parallèle (binaire /system/bin/ping, fiable sans root)
  * 3. Fusion avec la table ARP (/proc/net/arp) — attrape les appareils qui
- *    ne répondent pas à l'ICMP mais ont un échange ARP récent
+ *    ne répondent pas à l'ICMP mais ont un échange ARP récent. Double lecture
+ *    espacée de ~500 ms car la table ARP Android ne garde que les échanges
+ *    récents (beaucoup de MAC manquent sur une seule lecture).
  * 4. Reverse DNS pour le hostname
- * 5. Fabricant via la base OUI embarquée (assets/oui.txt)
+ * 5. Fabricant via la base OUI embarquée (assets/oui.txt), avec repli en
+ *    ligne (api.macvendors.com) si le préfixe est inconnu localement.
  */
 object NetworkScanner {
 
@@ -71,6 +75,17 @@ object NetworkScanner {
         return result
     }
 
+    /** Lit la table ARP système et la parse (vide si le fichier est indisponible). */
+    private fun readArp(): Map<String, String> =
+        parseArp(runCatching { java.io.File("/proc/net/arp").readText() }.getOrDefault(""))
+
+    /** Fusionne deux tables ARP (IP → MAC) ; la seconde est prioritaire en cas de conflit. */
+    fun mergeArp(first: Map<String, String>, second: Map<String, String>): Map<String, String> {
+        val merged = HashMap<String, String>(first)
+        merged.putAll(second)
+        return merged
+    }
+
     /** Parse une ligne de la base OUI : "f4cae5\tVENDOR". */
     fun parseOuiLine(line: String): Pair<String, String>? {
         val idx = line.indexOf('\t')
@@ -80,11 +95,19 @@ object NetworkScanner {
         return mac to line.substring(idx + 1)
     }
 
+    /** Préfixe OUI (6 hex) d'une MAC normalisée, ou null si la MAC est invalide. */
+    fun macPrefix(mac: String): String? {
+        val clean = mac.replace(":", "").replace("-", "").lowercase()
+        if (clean.length < 6) return null
+        val prefix = clean.substring(0, 6)
+        if (!prefix.all { it.isDigit() || it in 'a'..'f' }) return null
+        return prefix
+    }
+
     /** Normalise un MAC (aa:bb:cc:dd:ee:ff → aabbcc) et cherche le fabricant. */
     fun vendorFor(mac: String, oui: Map<String, String>): String {
-        val clean = mac.replace(":", "").replace("-", "").lowercase()
-        if (clean.length < 6) return ""
-        return oui[clean.substring(0, 6)] ?: ""
+        val prefix = macPrefix(mac) ?: return ""
+        return oui[prefix] ?: ""
     }
 
     /** Détecte l'IP locale + préfixe du réseau actif (Android). */
@@ -111,12 +134,17 @@ object NetworkScanner {
 
     /**
      * Scan complet du réseau local. Ping parallèle (64 threads), puis fusion
-     * avec l'ARP, reverse DNS, lookup fabricant et scan de ports pour les
-     * appareils en ligne.
+     * avec l'ARP (double lecture), reverse DNS, lookup fabricant et scan de
+     * ports pour les appareils en ligne.
+     *
+     * @param prefs SharedPreferences facultatif servant de cache persistant pour
+     *   le lookup fabricant en ligne (clé « vendor_cache_<prefixe6> »). Passé
+     *   par la couche UI ; null en test ou hors contexte Android.
      */
     suspend fun scan(
         oui: Map<String, String>,
         scanPorts: Boolean = true,
+        prefs: SharedPreferences? = null,
         onProgress: (done: Int, total: Int) -> Unit
     ): List<Device> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         val subnet = detectSubnet() ?: return@withContext emptyList()
@@ -146,15 +174,27 @@ object NetworkScanner {
             if (!executor.isShutdown) executor.shutdownNow()
         }
 
-        // Fusion ping + table ARP
-        val arpText = runCatching { java.io.File("/proc/net/arp").readText() }.getOrDefault("")
-        val arp = parseArp(arpText)
+        // Fusion ping + table ARP (double lecture espacée de ~500 ms : la table
+        // ARP Android ne contient que les échanges récents, on capte ainsi plus
+        // de MAC que sur une seule lecture).
+        val arp = mergeArp(readArp(), run {
+            kotlinx.coroutines.delay(500)
+            readArp()
+        })
         val allIps = (alive + arp.keys).toSortedSet()
+
+        // Cache en mémoire des fabricants résolus en ligne : évite d'interroger
+        // deux fois le même préfixe OUI au cours d'un même scan.
+        val vendorCache = HashMap<String, String>()
 
         val localIp = ip
         allIps.map { host ->
             val mac = arp[host] ?: ""
-            val vendor = vendorFor(mac, oui)
+            var vendor = vendorFor(mac, oui)
+            // Repli en ligne si la base locale ne connaît pas le préfixe.
+            if (vendor.isBlank() && mac.isNotBlank()) {
+                vendor = VendorLookup.lookup(mac, vendorCache, prefs) ?: ""
+            }
             val hostname = reverseDns(host)
             val ports = if (scanPorts && alive.contains(host)) PortScanner.scanPorts(host) else emptyList()
             val os = OsFingerprint.guess(ttlMap[host], ports, hostname)
