@@ -16,7 +16,8 @@ data class Device(
     val isSelf: Boolean = false,
     val ports: List<Int> = emptyList(),
     val os: String = "",
-    val ttl: Int? = null
+    val ttl: Int? = null,
+    val type: String = "Inconnu"
 )
 
 /** Résultat d'un ping : vivant ? + TTL de la réponse (pour l'OS). */
@@ -153,18 +154,21 @@ object NetworkScanner {
         val localIp = ip
         allIps.map { host ->
             val mac = arp[host] ?: ""
+            val vendor = vendorFor(mac, oui)
             val hostname = reverseDns(host)
             val ports = if (scanPorts && alive.contains(host)) PortScanner.scanPorts(host) else emptyList()
+            val os = OsFingerprint.guess(ttlMap[host], ports, hostname)
             Device(
                 ip = host,
                 mac = mac,
-                vendor = vendorFor(mac, oui),
+                vendor = vendor,
                 hostname = hostname,
                 alive = alive.contains(host),
                 isSelf = host == localIp,
                 ports = ports,
                 ttl = ttlMap[host],
-                os = OsFingerprint.guess(ttlMap[host], ports, hostname)
+                os = os,
+                type = DeviceType.classify(vendor, hostname, ports, os)
             )
         }.sortedBy { it.ip }
     }

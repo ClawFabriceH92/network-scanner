@@ -168,6 +168,43 @@ class FingFeaturesTest {
         assertEquals("", OsFingerprint.guess(null, emptyList(), ""))
     }
 
+    // ---------- DeviceType ----------
+
+    @Test
+    fun deviceType_printerByHostnameAndPort() {
+        assertEquals("Imprimante", DeviceType.classify("", "NPIFB1CEB", emptyList(), ""))
+        assertEquals("Imprimante", DeviceType.classify("HP", "printer", emptyList(), ""))
+        assertEquals("Imprimante", DeviceType.classify("", "", listOf(9100), ""))
+    }
+
+    @Test
+    fun deviceType_nasByHostnameAndVendor() {
+        assertEquals("NAS", DeviceType.classify("Synology", "NAS-CAB", emptyList(), ""))
+        assertEquals("NAS", DeviceType.classify("", "diskstation", emptyList(), ""))
+        assertEquals("NAS", DeviceType.classify("", "", listOf(5000), ""))
+    }
+
+    @Test
+    fun deviceType_phoneAndComputer() {
+        assertEquals("Smartphone", DeviceType.classify("Xiaomi", "Xiaomi 11T Pro", emptyList(), ""))
+        assertEquals("Ordinateur", DeviceType.classify("Dell", "DESKTOP-7D09GNT", emptyList(), ""))
+        assertEquals("Ordinateur", DeviceType.classify("", "", listOf(139, 445), ""))
+    }
+
+    @Test
+    fun deviceType_routerAndCameraAndUnknown() {
+        assertEquals("Routeur / Box", DeviceType.classify("Freebox SAS", "freebox", emptyList(), ""))
+        assertEquals("Caméra", DeviceType.classify("", "", listOf(554), ""))
+        assertEquals("Inconnu", DeviceType.classify("", "", emptyList(), ""))
+    }
+
+    @Test
+    fun deviceType_icons() {
+        assertEquals("🖨️", DeviceType.icon("Imprimante"))
+        assertEquals("📱", DeviceType.icon("Smartphone"))
+        assertEquals("❓", DeviceType.icon("Inconnu"))
+    }
+
     @Test
     fun ports_defaultEmpty() {
         val d = Device(ip = "1.2.3.4")

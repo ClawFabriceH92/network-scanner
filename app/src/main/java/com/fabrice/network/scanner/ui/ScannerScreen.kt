@@ -54,6 +54,7 @@ import com.fabrice.network.scanner.BuildConfig
 import com.fabrice.network.scanner.CsvExporter
 import com.fabrice.network.scanner.Device
 import com.fabrice.network.scanner.DeviceStore
+import com.fabrice.network.scanner.DeviceType
 import com.fabrice.network.scanner.HistoryStore
 import com.fabrice.network.scanner.NetworkScanner
 import com.fabrice.network.scanner.OuiDatabase
@@ -79,6 +80,8 @@ fun ScannerScreen() {
     var error by remember { mutableStateOf<String?>(null) }
     var selected by remember { mutableStateOf<Device?>(null) }
     var newDevices by remember { mutableStateOf<List<Device>>(emptyList()) }
+    // IP locale de l'appareil qui lance le scan (affichée après le premier scan)
+    var selfIp by remember { mutableStateOf<String?>(null) }
     // Clés des appareils absents de l'historique avant le dernier scan → badges 🆕
     var newKeys by remember { mutableStateOf(setOf<String>()) }
     // Force la recomposition des cartes après renommage/favori
@@ -92,6 +95,7 @@ fun ScannerScreen() {
             progress = 0
             newDevices = emptyList()
             newKeys = emptySet()
+            selfIp = NetworkScanner.detectSubnet()?.first
             val oui = OuiDatabase.load(context)
             val result = try {
                 NetworkScanner.scan(oui, scanPorts = true) { done, total -> progress = done }
@@ -177,11 +181,37 @@ fun ScannerScreen() {
                     Button(onClick = { runScan() }) { Text("📡 Scanner le réseau") }
                 }
             } else if (devices.isNotEmpty()) {
-                Text(
-                    "${devices.size} appareils trouvés",
-                    style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                )
+                // Bandeau : appareil qui lance le scan + compteur
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color(0xFFF4EDE0)
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("📱 Scan depuis ", style = MaterialTheme.typography.labelMedium)
+                        Text(
+                            selfIp ?: "—",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.weight(1f))
+                        Text(
+                            "${devices.size} appareils",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
@@ -277,6 +307,19 @@ private fun DeviceCard(
                 .padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // Icône du type d'appareil (comme Fing)
+            Box(
+                modifier = Modifier
+                    .background(
+                        Brush.linearGradient(listOf(Color(0xFF1B3A6B), Color(0xFF2E5A9E))),
+                        RoundedCornerShape(10.dp)
+                    )
+                    .padding(8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(DeviceType.icon(device.type), style = MaterialTheme.typography.titleMedium)
+            }
+            Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (isFavorite) Text("⭐ ", style = MaterialTheme.typography.titleSmall)
@@ -331,8 +374,28 @@ private fun DeviceCard(
                     color = if (device.alive) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                if (device.isSelf) {
+                    Spacer(Modifier.height(2.dp))
+                    SelfBadge()
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun SelfBadge() {
+    Box(
+        modifier = Modifier
+            .background(Color(0xFFC9972B), RoundedCornerShape(4.dp))
+            .padding(horizontal = 4.dp, vertical = 1.dp)
+    ) {
+        Text(
+            "ce périphérique",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color(0xFF1B3A6B),
+            fontWeight = FontWeight.Bold
+        )
     }
 }
 
@@ -393,6 +456,7 @@ private fun DeviceDialog(
                 InfoRow("IP", device.ip)
                 InfoRow("MAC", device.mac.ifBlank { "non disponible" })
                 InfoRow("Fabricant", device.vendor.ifBlank { "inconnu" })
+                InfoRow("Type", "${DeviceType.icon(device.type)} ${device.type}")
                 if (device.os.isNotBlank()) InfoRow("Système", device.os)
                 if (device.hostname.isNotBlank()) InfoRow("Nom réseau", device.hostname)
                 InfoRow("Statut", if (device.alive) "En ligne" else "Vu récemment (ARP)")
