@@ -13,12 +13,42 @@ object OsFingerprint {
 
     /**
      * Devine l'OS. [ttl] = TTL restant vu dans la réponse ping (null si inconnu).
-     * Priorité : hostname explicite > ports discriminants > TTL.
+     * [service] = résultat du banner grab (en-tête Server HTTP ou bannière SSH),
+     * la source la plus fiable.
+     * Priorité : banner grab > hostname explicite > ports discriminants > TTL.
      */
-    fun guess(ttl: Int?, ports: List<Int>, hostname: String): String {
+    fun guess(ttl: Int?, ports: List<Int>, hostname: String, service: String? = null): String {
+        fromService(service)?.let { return it }
         fromHostname(hostname)?.let { return it }
         fromPorts(ports)?.let { return it }
         return fromTtl(ttl)
+    }
+
+    /** OS précis déduit du banner grab (HTTP Server / SSH / services texte). */
+    private fun fromService(service: String?): String? {
+        if (service.isNullOrBlank()) return null
+        // Les déductions spécialisées d'abord (plus précises)
+        if (service.startsWith("SSH-")) {
+            BannerGrab.osFromSshBanner(service)?.let { return it }
+        }
+        if (service.contains("Server:", ignoreCase = true)) {
+            BannerGrab.osFromHttpServer(service)?.let { return it }
+        }
+        // Sinon banner texte générique (FTP/SMTP/POP3/IMAP/Telnet)
+        BannerGrab.osFromTextBanner(service)?.let { return it }
+        val s = service.lowercase()
+        return when {
+            s.contains("microsoft-iis") || s.contains("microsoft-httpapi") -> "Windows Server"
+            s.contains("synology") || s.contains("thttpd") -> "Synology DSM"
+            s.contains("ubuntu") || s.contains("debian") && s.contains("openssh") -> "Linux"
+            s.contains("openssh_for_windows") -> "Windows (OpenSSH)"
+            s.contains("raspbian") || s.contains("raspberry") -> "Raspberry Pi (Linux)"
+            s.contains("dropbear") -> "Routeur (Dropbear)"
+            s.contains("nginx") || s.contains("apache") || s.contains("openresty") ||
+                s.contains("caddy") || s.contains("lighttpd") -> "Linux (serveur web)"
+            s.contains("openssh") -> "Linux/Unix (SSH)"
+            else -> null
+        }
     }
 
     /** Indices explicites dans le nom réseau. */

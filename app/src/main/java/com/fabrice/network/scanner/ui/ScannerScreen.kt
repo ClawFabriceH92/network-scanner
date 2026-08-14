@@ -100,7 +100,10 @@ fun ScannerScreen() {
             // Cache persistant des fabricants résolus en ligne (par préfixe OUI).
             val vendorPrefs = context.getSharedPreferences("vendor_cache", Context.MODE_PRIVATE)
             val result = try {
-                NetworkScanner.scan(oui, scanPorts = true, prefs = vendorPrefs) { done, total -> progress = done }
+                // Le multicast lock est requis pour le SSDP (239.255.255.250)
+                withMulticastLock(context) {
+                    NetworkScanner.scan(oui, scanPorts = true, prefs = vendorPrefs) { done, total -> progress = done }
+                }
             } catch (e: Exception) {
                 error = e.message ?: "Erreur inconnue"
                 emptyList()
@@ -246,15 +249,17 @@ fun ScannerScreen() {
             onDismiss = { selected = null },
             onSaved = { refreshTick++ },
             onWol = {
-                val mac = device.mac
-                val subnet = NetworkScanner.detectSubnet()
-                val broadcast = if (subnet != null) NetworkScanner.broadcastAddress(subnet.first, subnet.second)
-                else "255.255.255.255"
-                val ok = withMulticastLock(context) {
-                    WakeOnLan.send(mac, broadcast)
+                scope.launch {
+                    val mac = device.mac
+                    val subnet = NetworkScanner.detectSubnet()
+                    val broadcast = if (subnet != null) NetworkScanner.broadcastAddress(subnet.first, subnet.second)
+                    else "255.255.255.255"
+                    val ok = withMulticastLock(context) {
+                        WakeOnLan.send(mac, broadcast)
+                    }
+                    val msg = if (ok) "Magic packet envoyé → $mac" else "Échec de l'envoi WoL"
+                    snackbar.showSnackbar(msg)
                 }
-                val msg = if (ok) "Magic packet envoyé → $mac" else "Échec de l'envoi WoL"
-                scope.launch { snackbar.showSnackbar(msg) }
             }
         )
     }
@@ -462,15 +467,35 @@ private fun DeviceDialog(
                 InfoRow("Type", "${DeviceType.icon(device.type)} ${device.type}")
                 if (device.os.isNotBlank()) InfoRow("Système", device.os)
                 if (device.hostname.isNotBlank()) InfoRow("Nom réseau", device.hostname)
+                device.latencyMs?.let { InfoRow("Latence", "$it ms") }
+                device.ttl?.let { InfoRow("TTL", "$it") }
                 InfoRow("Statut", if (device.alive) "En ligne" else "Vu récemment (ARP)")
                 InfoRow("Historique", if (isNew) "🆕 Nouveau sur le réseau" else "✅ Déjà vu auparavant")
+                device.upnp?.let { u ->
+                    if (u.friendlyName.isNotBlank()) InfoRow("Nom UPnP", u.friendlyName)
+                    if (u.manufacturer.isNotBlank() && device.vendor.isBlank()) InfoRow("Fab. UPnP", u.manufacturer)
+                    if (u.modelName.isNotBlank()) InfoRow("Modèle", u.modelName)
+                    if (u.modelDescription.isNotBlank()) InfoRow("Description", u.modelDescription)
+                    if (u.server.isNotBlank()) InfoRow("Serveur", u.server)
+                }
+                if (device.banner.isNotBlank()) InfoRow("Bannière", device.banner)
                 if (device.ports.isNotEmpty()) {
                     Spacer(Modifier.height(8.dp))
                     Text("Services ouverts :", style = MaterialTheme.typography.labelMedium)
                     Spacer(Modifier.height(4.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        device.ports.forEach { port ->
-                            PortBadge(port)
+                    device.ports.forEach { port ->
+                        Row(Modifier.padding(vertical = 2.dp)) {
+                            Text(
+                                PortScanner.serviceName(port),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.width(120.dp)
+                            )
+                            Text(
+                                "port $port",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                 }
@@ -551,8 +576,8 @@ private fun exportCsv(context: Context, devices: List<Device>) {
     context.startActivity(Intent.createChooser(intent, "Exporter le scan"))
 }
 
-/** Acquiert le multicast lock le temps de l'envoi du magic packet. */
-private fun <T> withMulticastLock(context: Context, block: () -> T): T {
+/** Acquiert le multicast lock le temps de l'exécution (requis pour broadcast/SSDP). */
+private suspend fun <T> withMulticastLock(context: Context, block: suspend () -> T): T {
     val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
     val lock = wifi.createMulticastLock("network-scanner-wol")
     lock.setReferenceCounted(false)

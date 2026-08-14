@@ -18,11 +18,14 @@ data class Device(
     val ports: List<Int> = emptyList(),
     val os: String = "",
     val ttl: Int? = null,
-    val type: String = "Inconnu"
+    val type: String = "Inconnu",
+    val banner: String = "",
+    val latencyMs: Int? = null,
+    val upnp: UpnpProbe.UpnpInfo? = null
 )
 
-/** Résultat d'un ping : vivant ? + TTL de la réponse (pour l'OS). */
-data class PingResult(val alive: Boolean, val ttl: Int?)
+/** Résultat d'un ping : vivant ? + TTL de la réponse (pour l'OS) + latence. */
+data class PingResult(val alive: Boolean, val ttl: Int?, val latencyMs: Int? = null)
 
 /**
  * Scanner réseau local (type Fing).
@@ -154,6 +157,7 @@ object NetworkScanner {
 
         val alive = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
         val ttlMap = java.util.concurrent.ConcurrentHashMap<String, Int>()
+        val latencyMap = java.util.concurrent.ConcurrentHashMap<String, Int>()
         val executor = Executors.newFixedThreadPool(64)
         try {
             hosts.forEachIndexed { index, host ->
@@ -162,6 +166,7 @@ object NetworkScanner {
                     if (r.alive) {
                         alive.add(host)
                         if (r.ttl != null) ttlMap[host] = r.ttl
+                        if (r.latencyMs != null) latencyMap[host] = r.latencyMs
                     }
                     if (index % 64 == 0 || index == hosts.size - 1) {
                         onProgress(alive.size, hosts.size)
@@ -173,6 +178,9 @@ object NetworkScanner {
         } finally {
             if (!executor.isShutdown) executor.shutdownNow()
         }
+
+        // Découverte UPnP/SSDP : une seule requête multicast, réponses par IP
+        val upnpByIp = UpnpProbe.discover()
 
         // Fusion ping + table ARP (double lecture espacée de ~500 ms : la table
         // ARP Android ne contient que les échanges récents, on capte ainsi plus
@@ -197,7 +205,15 @@ object NetworkScanner {
             }
             val hostname = reverseDns(host)
             val ports = if (scanPorts && alive.contains(host)) PortScanner.scanPorts(host) else emptyList()
-            val os = OsFingerprint.guess(ttlMap[host], ports, hostname)
+            // Banner grab : interroge les services ouverts (HTTP/SSH/FTP/SMTP…)
+            // pour préciser l'OS réel et enrichir la fiche appareil.
+            val banner = if (alive.contains(host)) grabService(host, ports) else ""
+            val os = OsFingerprint.guess(ttlMap[host], ports, hostname, banner.ifBlank { null })
+            // Infos UPnP éventuelles (friendlyName, fabricant, modèle…)
+            var upnp = upnpByIp[host]
+            if (upnp != null && upnp.location.isNotBlank() && !upnp.hasInfo) {
+                upnp = UpnpProbe.fetchDescription(upnp.location)
+            }
             Device(
                 ip = host,
                 mac = mac,
@@ -208,9 +224,37 @@ object NetworkScanner {
                 ports = ports,
                 ttl = ttlMap[host],
                 os = os,
-                type = DeviceType.classify(vendor, hostname, ports, os)
+                type = DeviceType.classify(vendor, hostname, ports, os),
+                banner = banner,
+                latencyMs = latencyMap[host],
+                upnp = upnp
             )
         }.sortedBy { it.ip }
+    }
+
+    /**
+     * Interroge les services ouverts pour lire une bannière identifiante.
+     * Priorité : HTTP (en-tête Server) puis SSH puis services texte (FTP…).
+     * Retourne la bannière brute (« Server: nginx/1.18 », « SSH-2.0-… »…).
+     */
+    private fun grabService(host: String, ports: List<Int>): String {
+        // HTTP : essaie les ports web connus parmi ceux ouverts
+        for (port in BannerGrab.HTTP_PORTS) {
+            if (port in ports) {
+                BannerGrab.httpServerHeader(host, port)?.let { return "Server: $it" }
+            }
+        }
+        // SSH : bannière d'identification
+        if (22 in ports) {
+            BannerGrab.sshBanner(host)?.let { return it }
+        }
+        // Services texte : FTP, SMTP, POP3, IMAP, Telnet
+        for ((port, _) in BannerGrab.OTHER_SERVICES) {
+            if (port in ports) {
+                BannerGrab.textBanner(host, port)?.let { return it }
+            }
+        }
+        return ""
     }
 
     private fun pingHost(host: String): PingResult {
@@ -225,7 +269,8 @@ object NetworkScanner {
             }.getOrDefault("")
             runCatching { process.destroy() }
             val ttl = parseTtl(output)
-            PingResult(ok, ttl)
+            val latency = parseLatency(output)
+            PingResult(ok, ttl, latency)
         } catch (e: Exception) {
             PingResult(false, null)
         }
@@ -234,6 +279,13 @@ object NetworkScanner {
     /** Extrait le TTL de la sortie ping (« ttl=64 »). */
     fun parseTtl(pingOutput: String): Int? =
         Regex("ttl=(\\d+)").find(pingOutput)?.groupValues?.get(1)?.toIntOrNull()
+
+    /** Extrait la latence de la sortie ping (« time=2.34 ms », « time<1 ms »). */
+    fun parseLatency(pingOutput: String): Int? {
+        val m = Regex("time[=<]([0-9.]+)").find(pingOutput) ?: return null
+        val v = m.groupValues[1].toDoubleOrNull() ?: return null
+        return if (v < 1) 1 else v.toInt()
+    }
 
     private fun reverseDns(host: String): String {
         return try {

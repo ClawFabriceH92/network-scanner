@@ -129,6 +129,73 @@ class FingFeaturesTest {
         assertNull(NetworkScanner.parseTtl(""))
     }
 
+    @Test
+    fun parseLatency_extractsValue() {
+        assertEquals(2, NetworkScanner.parseLatency("64 bytes from 192.168.0.1: icmp_seq=1 ttl=64 time=2.3 ms"))
+        assertEquals(1, NetworkScanner.parseLatency("time<1 ms"))
+        assertEquals(12, NetworkScanner.parseLatency("time=12.7 ms"))
+        assertNull(NetworkScanner.parseLatency("no response"))
+    }
+
+    // ---------- UpnpProbe ----------
+
+    @Test
+    fun ssdResponse_parsesHeaders() {
+        val body = """
+            HTTP/1.1 200 OK
+            CACHE-CONTROL: max-age=1800
+            LOCATION: http://192.168.0.1:49152/description.xml
+            SERVER: Linux/3.14 UPnP/1.0
+            ST: upnp:rootdevice
+        """.trimIndent()
+        val info = UpnpProbe.parseSsdResponse(body)
+        assertEquals("http://192.168.0.1:49152/description.xml", info.location)
+        assertEquals("Linux/3.14 UPnP/1.0", info.server)
+    }
+
+    @Test
+    fun descriptionXml_extractsFields() {
+        val xml = """
+            <root><device>
+                <friendlyName>Freebox Server</friendlyName>
+                <manufacturer>Free SAS</manufacturer>
+                <modelName>Freebox V8</modelName>
+                <modelDescription>Internet Gateway</modelDescription>
+            </device></root>
+        """.trimIndent()
+        val info = UpnpProbe.parseDescriptionXml(xml)
+        assertEquals("Freebox Server", info.friendlyName)
+        assertEquals("Free SAS", info.manufacturer)
+        assertEquals("Freebox V8", info.modelName)
+        assertEquals("Internet Gateway", info.modelDescription)
+        assertEquals("", info.server)
+    }
+
+    @Test
+    fun descriptionXml_unknownReturnsBlank() {
+        val info = UpnpProbe.parseDescriptionXml("<root><device></device></root>")
+        assertEquals("", info.friendlyName)
+        assertEquals("", info.modelName)
+    }
+
+    // ---------- BannerGrab texte ----------
+
+    @Test
+    fun textBanner_osDetection() {
+        assertEquals("Linux (FTP)", BannerGrab.osFromTextBanner("220 ProFTPD 1.3.5e Server ready"))
+        assertEquals("Linux (mail)", BannerGrab.osFromTextBanner("220 localhost ESMTP Postfix"))
+        assertEquals("Windows Server", BannerGrab.osFromTextBanner("220 Microsoft ESMTP MAIL Service"))
+        assertNull(BannerGrab.osFromTextBanner("220 hello"))
+    }
+
+    @Test
+    fun httpAndSshOsDetection() {
+        assertEquals("Linux (nginx)", BannerGrab.osFromHttpServer("nginx/1.18.0"))
+        assertEquals("Windows Server (IIS)", BannerGrab.osFromHttpServer("Microsoft-IIS/10.0"))
+        assertEquals("Linux Ubuntu (OpenSSH)", BannerGrab.osFromSshBanner("SSH-2.0-OpenSSH_8.2p1 Ubuntu-4ubuntu0.11"))
+        assertEquals("Windows (OpenSSH)", BannerGrab.osFromSshBanner("SSH-2.0-OpenSSH_for_Windows_8.1"))
+    }
+
     // ---------- OsFingerprint ----------
 
     @Test
