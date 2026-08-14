@@ -1,7 +1,13 @@
 package com.fabrice.network.scanner.ui
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.net.wifi.WifiManager
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -13,13 +19,20 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -31,40 +44,66 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
+import com.fabrice.network.scanner.CsvExporter
 import com.fabrice.network.scanner.Device
+import com.fabrice.network.scanner.DeviceStore
+import com.fabrice.network.scanner.HistoryStore
 import com.fabrice.network.scanner.NetworkScanner
 import com.fabrice.network.scanner.OuiDatabase
+import com.fabrice.network.scanner.PortScanner
+import com.fabrice.network.scanner.ScanHistory
+import com.fabrice.network.scanner.WakeOnLan
 import kotlinx.coroutines.launch
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScannerScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
+
+    val deviceStore = remember { DeviceStore(context) }
+    val historyStore = remember { HistoryStore(context) }
 
     var devices by remember { mutableStateOf<List<Device>>(emptyList()) }
     var scanning by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf(0) }
     var error by remember { mutableStateOf<String?>(null) }
     var selected by remember { mutableStateOf<Device?>(null) }
+    var newDevices by remember { mutableStateOf<List<Device>>(emptyList()) }
+    var scanCount by remember { mutableStateOf(0) }
 
     fun runScan() {
         scope.launch {
             scanning = true
             error = null
             progress = 0
+            newDevices = emptyList()
             val oui = OuiDatabase.load(context)
             val result = try {
-                NetworkScanner.scan(oui) { done, total -> progress = done }
+                NetworkScanner.scan(oui, scanPorts = true) { done, total -> progress = done }
             } catch (e: Exception) {
                 error = e.message ?: "Erreur inconnue"
                 emptyList()
             }
+            // Détection des nouveaux appareils par rapport au dernier scan connu
+            if (result.isNotEmpty()) {
+                val previous = historyStore.load()
+                val fresh = ScanHistory.detectNewDevices(previous, result)
+                if (fresh.isNotEmpty()) newDevices = fresh
+                historyStore.save(result)
+            }
             devices = result
             scanning = false
+            scanCount++
         }
     }
 
@@ -73,12 +112,18 @@ fun ScannerScreen() {
             TopAppBar(
                 title = { Text("Scan Réseau") },
                 actions = {
+                    if (devices.isNotEmpty() && !scanning) {
+                        TextButton(onClick = { exportCsv(context, devices) }) {
+                            Text("📤 Export")
+                        }
+                    }
                     TextButton(onClick = { runScan() }, enabled = !scanning) {
                         Text(if (scanning) "Scan…" else "🔄 Scanner")
                     }
                 }
             )
-        }
+        },
+        snackbarHost = { SnackbarHost(snackbar) }
     ) { padding ->
         Column(
             modifier = Modifier
@@ -97,6 +142,9 @@ fun ScannerScreen() {
                     Text("Recherche d'appareils… ($progress)")
                 }
             }
+            if (newDevices.isNotEmpty()) {
+                NewDevicesBanner(newDevices)
+            }
             error?.let {
                 Text(
                     it,
@@ -113,7 +161,7 @@ fun ScannerScreen() {
                     verticalArrangement = Arrangement.Center
                 ) {
                     Text(
-                        "Appuie sur Scanner pour détecter les appareils du réseau local.",
+                        "Appuie sur Scanner pour détecter les appareils du réseau local.\nPing, ARP, fabricants, services (ports) et réveil à distance.",
                         style = MaterialTheme.typography.bodyLarge
                     )
                     Spacer(Modifier.height(16.dp))
@@ -131,7 +179,12 @@ fun ScannerScreen() {
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(devices, key = { it.ip }) { device ->
-                        DeviceCard(device, onClick = { selected = device })
+                        DeviceCard(
+                            device = device,
+                            displayName = deviceStore.displayName(device),
+                            isFavorite = deviceStore.isFavorite(ScanHistory.identityKey(device)),
+                            onClick = { selected = device }
+                        )
                     }
                 }
             }
@@ -139,16 +192,68 @@ fun ScannerScreen() {
     }
 
     selected?.let { device ->
-        DeviceDialog(device = device, onDismiss = { selected = null })
+        DeviceDialog(
+            device = device,
+            store = deviceStore,
+            onDismiss = { selected = null },
+            onWol = {
+                val key = ScanHistory.identityKey(device)
+                val mac = device.mac
+                val subnet = NetworkScanner.detectSubnet()
+                val broadcast = if (subnet != null) NetworkScanner.broadcastAddress(subnet.first, subnet.second)
+                else "255.255.255.255"
+                val ok = withMulticastLock(context) {
+                    WakeOnLan.send(mac, broadcast)
+                }
+                val msg = if (ok) "Magic packet envoyé → $mac" else "Échec de l'envoi WoL"
+                scope.launch { snackbar.showSnackbar(msg) }
+            }
+        )
     }
 }
 
 @Composable
-private fun DeviceCard(device: Device, onClick: () -> Unit) {
+private fun NewDevicesBanner(newDevices: List<Device>) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = Color(0xFF1B3A6B)
+        )
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text(
+                "🆕 ${newDevices.size} nouvel${if (newDevices.size > 1) "s appareil" else " appareil"}${if (newDevices.size > 1) "s" else ""} détecté${if (newDevices.size > 1) "s" else ""}",
+                color = Color(0xFFC9972B),
+                fontWeight = FontWeight.Bold
+            )
+            newDevices.take(5).forEach { d ->
+                Text(
+                    "• ${d.hostname.ifBlank { d.ip }} (${d.ip})",
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DeviceCard(
+    device: Device,
+    displayName: String,
+    isFavorite: Boolean,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(
+            containerColor = Color.White
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Row(
             modifier = Modifier
@@ -157,17 +262,35 @@ private fun DeviceCard(device: Device, onClick: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
-                Text(
-                    text = device.hostname.ifBlank { device.ip },
-                    style = MaterialTheme.typography.titleSmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (isFavorite) Text("⭐ ", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        text = displayName,
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
                 Text(
                     text = device.vendor.ifBlank { "Fabricant inconnu" },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                if (device.ports.isNotEmpty()) {
+                    Spacer(Modifier.height(4.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        device.ports.take(4).forEach { port ->
+                            PortBadge(port)
+                        }
+                        if (device.ports.size > 4) {
+                            Text(
+                                "+${device.ports.size - 4}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(
@@ -187,10 +310,38 @@ private fun DeviceCard(device: Device, onClick: () -> Unit) {
 }
 
 @Composable
-private fun DeviceDialog(device: Device, onDismiss: () -> Unit) {
+private fun PortBadge(port: Int) {
+    Box(
+        modifier = Modifier
+            .background(
+                Brush.linearGradient(listOf(Color(0xFF1B3A6B), Color(0xFF2E5A9E))),
+                RoundedCornerShape(6.dp)
+            )
+            .padding(horizontal = 6.dp, vertical = 2.dp)
+    ) {
+        Text(
+            PortScanner.serviceName(port),
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White
+        )
+    }
+}
+
+@Composable
+private fun DeviceDialog(
+    device: Device,
+    store: DeviceStore,
+    onDismiss: () -> Unit,
+    onWol: () -> Unit
+) {
+    val key = ScanHistory.identityKey(device)
+    var customName by remember { mutableStateOf(store.customName(key)) }
+    var isFav by remember { mutableStateOf(store.isFavorite(key)) }
+    val wolAvailable = device.mac.isNotBlank()
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(device.hostname.ifBlank { device.ip }) },
+        title = { Text(store.displayName(device)) },
         text = {
             Column {
                 InfoRow("IP", device.ip)
@@ -198,9 +349,50 @@ private fun DeviceDialog(device: Device, onDismiss: () -> Unit) {
                 InfoRow("Fabricant", device.vendor.ifBlank { "inconnu" })
                 if (device.hostname.isNotBlank()) InfoRow("Nom réseau", device.hostname)
                 InfoRow("Statut", if (device.alive) "En ligne" else "Vu récemment (ARP)")
+                if (device.ports.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text("Services ouverts :", style = MaterialTheme.typography.labelMedium)
+                    Spacer(Modifier.height(4.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        device.ports.forEach { port ->
+                            PortBadge(port)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = customName,
+                    onValueChange = { customName = it },
+                    label = { Text("Nom personnalisé") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    TextButton(onClick = {
+                        isFav = !isFav
+                        store.setFavorite(key, isFav)
+                    }) {
+                        Text(if (isFav) "★ Favori" else "☆ Favori")
+                    }
+                    if (wolAvailable) {
+                        TextButton(onClick = onWol) {
+                            Text("⏰ Réveiller (WoL)")
+                        }
+                    }
+                }
             }
         },
-        confirmButton = {},
+        confirmButton = {
+            TextButton(onClick = {
+                store.setCustomName(key, customName)
+                onDismiss()
+            }) { Text("OK") }
+        },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Fermer") }
         }
@@ -217,5 +409,37 @@ private fun InfoRow(label: String, value: String) {
             modifier = Modifier.width(100.dp)
         )
         Text(value, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/** Exporte le scan en CSV (BOM UTF-8, séparateur ;) et ouvre le partage. */
+private fun exportCsv(context: Context, devices: List<Device>) {
+    val dir = File(context.filesDir, "exports").apply { mkdirs() }
+    val file = File(dir, "scan_reseau_${System.currentTimeMillis()}.csv")
+    file.writeText(CsvExporter.buildCsv(devices), Charsets.UTF_8)
+
+    val uri: Uri = FileProvider.getUriForFile(
+        context,
+        "${context.packageName}.fileprovider",
+        file
+    )
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/csv"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(intent, "Exporter le scan"))
+}
+
+/** Acquiert le multicast lock le temps de l'envoi du magic packet. */
+private fun <T> withMulticastLock(context: Context, block: () -> T): T {
+    val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+    val lock = wifi.createMulticastLock("network-scanner-wol")
+    lock.setReferenceCounted(false)
+    lock.acquire()
+    return try {
+        block()
+    } finally {
+        runCatching { lock.release() }
     }
 }

@@ -13,7 +13,8 @@ data class Device(
     val vendor: String = "",
     val hostname: String = "",
     val alive: Boolean = true,
-    val isSelf: Boolean = false
+    val isSelf: Boolean = false,
+    val ports: List<Int> = emptyList()
 )
 
 /**
@@ -95,12 +96,21 @@ object NetworkScanner {
         return null
     }
 
+    /** Adresse de broadcast d'un sous-réseau (IP + préfixe). */
+    fun broadcastAddress(ip: String, prefix: Int): String {
+        val net = networkAddress(ip, prefix)
+        val size = (1L shl (32 - prefix)) - 1
+        return intToIp(net or size)
+    }
+
     /**
      * Scan complet du réseau local. Ping parallèle (64 threads), puis fusion
-     * avec l'ARP, reverse DNS et lookup fabricant.
+     * avec l'ARP, reverse DNS, lookup fabricant et scan de ports pour les
+     * appareils en ligne.
      */
     suspend fun scan(
         oui: Map<String, String>,
+        scanPorts: Boolean = true,
         onProgress: (done: Int, total: Int) -> Unit
     ): List<Device> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         val subnet = detectSubnet() ?: return@withContext emptyList()
@@ -139,9 +149,10 @@ object NetworkScanner {
                 vendor = vendorFor(mac, oui),
                 hostname = reverseDns(host),
                 alive = alive.contains(host),
-                isSelf = host == localIp
+                isSelf = host == localIp,
+                ports = if (scanPorts && alive.contains(host)) PortScanner.scanPorts(host) else emptyList()
             )
-        }.sortedWith(compareBy<Device> { it.ip }.thenBy { it.ip })
+        }.sortedBy { it.ip }
     }
 
     private fun pingHost(host: String): Boolean {
