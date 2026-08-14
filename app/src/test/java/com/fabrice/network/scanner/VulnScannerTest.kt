@@ -205,4 +205,35 @@ class VulnScannerTest {
         val ranged = db.byProduct.values.flatten().count { it.ranges.isNotEmpty() }
         assertTrue(ranged > 200)
     }
+
+    // ---------- CveUpdateManager (âge / obsolescence) ----------
+
+    @Test
+    fun ageDays_today() {
+        val today = java.time.LocalDate.now().toString()
+        assertEquals(0L, CveUpdateManager.ageDays(today))
+        assertFalse(CveUpdateManager.isStale(today))
+    }
+
+    @Test
+    fun ageDays_recentIsNotStale() {
+        val recent = java.time.LocalDate.now().minusDays(10).toString()
+        assertEquals(10L, CveUpdateManager.ageDays(recent))
+        assertFalse(CveUpdateManager.isStale(recent))
+    }
+
+    @Test
+    fun ageDays_oldIsStale() {
+        val old = java.time.LocalDate.now().minusDays(45).toString()
+        assertEquals(45L, CveUpdateManager.ageDays(old))
+        assertTrue(CveUpdateManager.isStale(old))
+    }
+
+    @Test
+    fun ageDays_invalidOrBlank() {
+        assertNull(CveUpdateManager.ageDays(""))
+        assertNull(CveUpdateManager.ageDays("pas-une-date"))
+        // Base inconnue = considérée obsolète (à mettre à jour)
+        assertTrue(CveUpdateManager.isStale(""))
+    }
 }

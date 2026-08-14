@@ -56,6 +56,7 @@ import com.fabrice.network.scanner.BuildConfig
 import com.fabrice.network.scanner.CsvExporter
 import com.fabrice.network.scanner.CveDatabaseStore
 import com.fabrice.network.scanner.CveEntry
+import com.fabrice.network.scanner.CveUpdateManager
 import com.fabrice.network.scanner.Device
 import com.fabrice.network.scanner.DeviceStore
 import com.fabrice.network.scanner.DeviceType
@@ -97,6 +98,12 @@ fun ScannerScreen() {
     // Vulnérabilités par IP (calculées après chaque scan, base CVE embarquée)
     var vulnsByIp by remember { mutableStateOf<Map<String, VulnScanner.DeviceVulns>>(emptyMap()) }
     var cveDbVersion by remember { mutableStateOf<String?>(null) }
+    // Écran : 0 = scan, 1 = aide, 2 = à propos
+    var screen by remember { mutableStateOf(0) }
+    // État de la mise à jour de la base CVE
+    var cveUpdating by remember { mutableStateOf(false) }
+    var cveUpdateResult by remember { mutableStateOf<String?>(null) }
+    var cveStale by remember { mutableStateOf(false) }
 
     fun runScan() {
         scope.launch {
@@ -105,11 +112,19 @@ fun ScannerScreen() {
             progress = 0
             newDevices = emptyList()
             newKeys = emptySet()
-            selfIp = NetworkScanner.detectSubnet()?.first
+            val subnet = NetworkScanner.detectSubnet()
+            if (subnet == null) {
+                // Feature 3 : erreur réseau claire avant de lancer un scan inutile
+                error = "Aucun réseau Wi-Fi détecté. Connecte-toi à un réseau, puis réessaie."
+                scanning = false
+                return@launch
+            }
+            selfIp = subnet.first
             val oui = OuiDatabase.load(context)
             // Base CVE embarquée pour le scan de vulnérabilités (CISA KEV + NVD)
             val cveDb = CveDatabaseStore.load(context)
             cveDbVersion = cveDb.generated.ifBlank { null }
+            cveStale = CveUpdateManager.isStale(cveDbVersion ?: "")
             // Cache persistant des fabricants résolus en ligne (par préfixe OUI).
             val vendorPrefs = context.getSharedPreferences("vendor_cache", Context.MODE_PRIVATE)
             val result = try {
@@ -143,18 +158,55 @@ fun ScannerScreen() {
         }
     }
 
+    fun updateCveBase(
+        context: Context,
+        onResult: (String) -> Unit
+    ) {
+        scope.launch {
+            cveUpdating = true
+            cveUpdateResult = null
+            val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                CveUpdateManager.update(context)
+            }
+            if (result != null) {
+                // La base a changé : on force le rechargement au prochain scan
+                CveDatabaseStore.invalidate()
+                cveDbVersion = result.generated
+                cveStale = CveUpdateManager.isStale(result.generated)
+                onResult("✅ Base mise à jour : ${result.generated} (${result.allCount} CVE)")
+            } else {
+                onResult("❌ Échec de la mise à jour (réseau ou base indisponible)")
+            }
+            cveUpdating = false
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Scan Réseau") },
-                actions = {
-                    if (devices.isNotEmpty() && !scanning) {
-                        TextButton(onClick = { exportCsv(context, devices, vulnsByIp) }) {
-                            Text("📤 Export")
+                title = {
+                    Text(
+                        when (screen) {
+                            1 -> "Aide"
+                            2 -> "À propos"
+                            else -> "Scan Réseau"
                         }
-                    }
-                    TextButton(onClick = { runScan() }, enabled = !scanning) {
-                        Text(if (scanning) "Scan…" else "🔄 Scanner")
+                    )
+                },
+                actions = {
+                    if (screen != 0) {
+                        TextButton(onClick = { screen = 0 }) { Text("← Retour") }
+                    } else {
+                        if (devices.isNotEmpty() && !scanning) {
+                            TextButton(onClick = { exportCsv(context, devices, vulnsByIp) }) {
+                                Text("📤 Export")
+                            }
+                        }
+                        TextButton(onClick = { runScan() }, enabled = !scanning) {
+                            Text(if (scanning) "Scan…" else "🔄 Scanner")
+                        }
+                        TextButton(onClick = { screen = 1 }) { Text("?") }
+                        TextButton(onClick = { screen = 2 }) { Text("ℹ️") }
                     }
                 }
             )
@@ -166,6 +218,11 @@ fun ScannerScreen() {
                 .padding(padding)
                 .fillMaxSize()
         ) {
+            if (screen == 1) {
+                HelpScreen()
+            } else if (screen == 2) {
+                AboutScreen()
+            } else {
             // Onglets : Périphériques / Réseau
             TabRow(selectedTabIndex = selectedTab) {
                 Tab(
@@ -198,6 +255,16 @@ fun ScannerScreen() {
                 NewDevicesBanner(newDevices)
             }
             NetworkPanel()
+            // Bandeau base CVE : obsolète ou mise à jour proposée
+            if (!cveUpdating && (cveStale || cveUpdateResult != null)) {
+                CveBanner(
+                    version = cveDbVersion,
+                    stale = cveStale,
+                    result = cveUpdateResult,
+                    onUpdate = { updateCveBase(context) { msg -> cveUpdateResult = msg } },
+                    onDismiss = { cveUpdateResult = null }
+                )
+            }
             error?.let {
                 Text(
                     it,
@@ -274,6 +341,7 @@ fun ScannerScreen() {
                 }
             }
             } // fin onglet Périphériques (else)
+            } // fin écran scan (screen == 0)
         }
     }
 
@@ -325,6 +393,65 @@ private fun NewDevicesBanner(newDevices: List<Device>) {
                     color = Color.White,
                     style = MaterialTheme.typography.bodySmall
                 )
+            }
+        }
+    }
+}
+
+/** Bandeau base CVE : obsolète ou résultat de mise à jour. */
+@Composable
+private fun CveBanner(
+    version: String?,
+    stale: Boolean,
+    result: String?,
+    onUpdate: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (stale) Color(0xFFB3261E) else Color(0xFFF4EDE0)
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    if (stale) "⚠️ Base CVE obsolète (${version ?: "?"})"
+                    else "🛡️ ${result ?: "Base CVE"}",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = if (stale) Color.White else MaterialTheme.colorScheme.onSurface
+                )
+                if (stale) {
+                    Text(
+                        "Plus de 30 jours : les nouvelles failles ne sont pas couvertes.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White
+                    )
+                }
+                result?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (stale) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            if (stale) {
+                TextButton(onClick = onUpdate) {
+                    Text("Mettre à jour", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            } else {
+                TextButton(onClick = onDismiss) {
+                    Text("OK", color = MaterialTheme.colorScheme.primary)
+                }
             }
         }
     }
