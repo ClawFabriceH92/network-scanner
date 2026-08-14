@@ -36,11 +36,18 @@ jobs:
       - name: Build debug APK
         run: ./gradlew assembleDebug --no-daemon
 
+      - name: Rename APK with version
+        id: version
+        run: |
+          VERSION=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts | head -1)
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          cp app/build/outputs/apk/debug/app-debug.apk "network-scanner-v${VERSION}.apk"
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: network-scanner-apk
+          path: network-scanner-v*.apk
           if-no-files-found: error
 
       - name: Publish "latest" release (push on main)
@@ -50,7 +57,7 @@ jobs:
         run: |
           gh release delete latest --yes --repo "${{ github.repository }}" 2>/dev/null || true
           for i in 1 2 3 4 5; do
-            if gh release create latest app/build/outputs/apk/debug/app-debug.apk \
+            if gh release create latest "network-scanner-v${{ steps.version.outputs.VERSION }}.apk" \
               --title "Latest build" \
               --notes "APK le plus récent — build automatique du push sur main." \
               --repo "${{ github.repository }}"; then
@@ -65,9 +72,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" app/build/outputs/apk/debug/app-debug.apk \
+          gh release create "$GITHUB_REF_NAME" "network-scanner-v${{ steps.version.outputs.VERSION }}.apk" \
             --title "$GITHUB_REF_NAME" \
             --notes "Build automatique — APK $GITHUB_REF_NAME." \
             --repo "${{ github.repository }}" \
-            || gh release upload "$GITHUB_REF_NAME" app/build/outputs/apk/debug/app-debug.apk \
+            || gh release upload "$GITHUB_REF_NAME" "network-scanner-v${{ steps.version.outputs.VERSION }}.apk" \
                --clobber --repo "${{ github.repository }}"

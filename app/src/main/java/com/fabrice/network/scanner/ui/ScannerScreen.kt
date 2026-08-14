@@ -50,6 +50,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import com.fabrice.network.scanner.BuildConfig
 import com.fabrice.network.scanner.CsvExporter
 import com.fabrice.network.scanner.Device
 import com.fabrice.network.scanner.DeviceStore
@@ -288,7 +289,9 @@ private fun DeviceCard(
                     )
                 }
                 Text(
-                    text = device.vendor.ifBlank { "Fabricant inconnu" },
+                    text = if (device.vendor.isNotBlank()) device.vendor
+                    else if (device.os.isNotBlank()) "💻 ${device.os}"
+                    else "Fabricant inconnu",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -390,6 +393,7 @@ private fun DeviceDialog(
                 InfoRow("IP", device.ip)
                 InfoRow("MAC", device.mac.ifBlank { "non disponible" })
                 InfoRow("Fabricant", device.vendor.ifBlank { "inconnu" })
+                if (device.os.isNotBlank()) InfoRow("Système", device.os)
                 if (device.hostname.isNotBlank()) InfoRow("Nom réseau", device.hostname)
                 InfoRow("Statut", if (device.alive) "En ligne" else "Vu récemment (ARP)")
                 InfoRow("Historique", if (isNew) "🆕 Nouveau sur le réseau" else "✅ Déjà vu auparavant")
@@ -461,7 +465,10 @@ private fun InfoRow(label: String, value: String) {
 /** Exporte le scan en CSV (BOM UTF-8, séparateur ;) et ouvre le partage. */
 private fun exportCsv(context: Context, devices: List<Device>) {
     val dir = File(context.filesDir, "exports").apply { mkdirs() }
-    val file = File(dir, "scan_reseau_${System.currentTimeMillis()}.csv")
+    val file = File(
+        dir,
+        "scan_reseau_v${BuildConfig.VERSION_NAME}_${System.currentTimeMillis()}.csv"
+    )
     file.writeText(CsvExporter.buildCsv(devices), Charsets.UTF_8)
 
     val uri: Uri = FileProvider.getUriForFile(

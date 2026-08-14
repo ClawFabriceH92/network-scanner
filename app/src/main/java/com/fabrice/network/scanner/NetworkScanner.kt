@@ -14,8 +14,13 @@ data class Device(
     val hostname: String = "",
     val alive: Boolean = true,
     val isSelf: Boolean = false,
-    val ports: List<Int> = emptyList()
+    val ports: List<Int> = emptyList(),
+    val os: String = "",
+    val ttl: Int? = null
 )
+
+/** Résultat d'un ping : vivant ? + TTL de la réponse (pour l'OS). */
+data class PingResult(val alive: Boolean, val ttl: Int?)
 
 /**
  * Scanner réseau local (type Fing).
@@ -119,11 +124,16 @@ object NetworkScanner {
         if (hosts.isEmpty()) return@withContext emptyList()
 
         val alive = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        val ttlMap = java.util.concurrent.ConcurrentHashMap<String, Int>()
         val executor = Executors.newFixedThreadPool(64)
         try {
             hosts.forEachIndexed { index, host ->
                 executor.execute {
-                    if (pingHost(host)) alive.add(host)
+                    val r = pingHost(host)
+                    if (r.alive) {
+                        alive.add(host)
+                        if (r.ttl != null) ttlMap[host] = r.ttl
+                    }
                     if (index % 64 == 0 || index == hosts.size - 1) {
                         onProgress(alive.size, hosts.size)
                     }
@@ -143,30 +153,43 @@ object NetworkScanner {
         val localIp = ip
         allIps.map { host ->
             val mac = arp[host] ?: ""
+            val hostname = reverseDns(host)
+            val ports = if (scanPorts && alive.contains(host)) PortScanner.scanPorts(host) else emptyList()
             Device(
                 ip = host,
                 mac = mac,
                 vendor = vendorFor(mac, oui),
-                hostname = reverseDns(host),
+                hostname = hostname,
                 alive = alive.contains(host),
                 isSelf = host == localIp,
-                ports = if (scanPorts && alive.contains(host)) PortScanner.scanPorts(host) else emptyList()
+                ports = ports,
+                ttl = ttlMap[host],
+                os = OsFingerprint.guess(ttlMap[host], ports, hostname)
             )
         }.sortedBy { it.ip }
     }
 
-    private fun pingHost(host: String): Boolean {
+    private fun pingHost(host: String): PingResult {
         return try {
             val process = ProcessBuilder("/system/bin/ping", "-c", "1", "-W", "1", host)
                 .redirectErrorStream(true)
                 .start()
             val ok = process.waitFor(3, TimeUnit.SECONDS) && process.exitValue() == 0
+            val output = runCatching {
+                val text = process.inputStream.bufferedReader().use { it.readText() }
+                text
+            }.getOrDefault("")
             runCatching { process.destroy() }
-            ok
+            val ttl = parseTtl(output)
+            PingResult(ok, ttl)
         } catch (e: Exception) {
-            false
+            PingResult(false, null)
         }
     }
+
+    /** Extrait le TTL de la sortie ping (« ttl=64 »). */
+    fun parseTtl(pingOutput: String): Int? =
+        Regex("ttl=(\\d+)").find(pingOutput)?.groupValues?.get(1)?.toIntOrNull()
 
     private fun reverseDns(host: String): String {
         return try {

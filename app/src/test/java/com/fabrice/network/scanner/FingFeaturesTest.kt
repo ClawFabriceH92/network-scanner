@@ -122,9 +122,58 @@ class FingFeaturesTest {
     }
 
     @Test
+    fun parseTtl_extractsValue() {
+        assertEquals(64, NetworkScanner.parseTtl("64 bytes from 192.168.0.1: icmp_seq=1 ttl=64 time=2.3 ms"))
+        assertEquals(128, NetworkScanner.parseTtl("ttl=128"))
+        assertNull(NetworkScanner.parseTtl("no response"))
+        assertNull(NetworkScanner.parseTtl(""))
+    }
+
+    // ---------- OsFingerprint ----------
+
+    @Test
+    fun os_ttlWindows() {
+        assertEquals("Windows", OsFingerprint.guess(128, emptyList(), ""))
+        assertEquals("Windows", OsFingerprint.guess(126, emptyList(), ""))
+    }
+
+    @Test
+    fun os_ttlLinux() {
+        assertEquals("Linux / macOS / Android", OsFingerprint.guess(64, emptyList(), ""))
+        assertEquals("Linux / macOS / Android", OsFingerprint.guess(60, emptyList(), ""))
+    }
+
+    @Test
+    fun os_ttlRouter() {
+        assertEquals("Routeur (Unix/Cisco)", OsFingerprint.guess(255, emptyList(), ""))
+    }
+
+    @Test
+    fun os_portsWinAndIos() {
+        assertEquals("Windows", OsFingerprint.guess(null, listOf(139, 445), ""))
+        assertEquals("Windows", OsFingerprint.guess(null, listOf(3389), ""))
+        assertEquals("Apple iOS", OsFingerprint.guess(null, listOf(62078), ""))
+    }
+
+    @Test
+    fun os_hostnameWins() {
+        assertEquals("Windows", OsFingerprint.guess(64, emptyList(), "DESKTOP-AB12"))
+        assertEquals("Apple iOS", OsFingerprint.guess(64, emptyList(), "iphone-de-fab"))
+        assertEquals("Raspberry Pi (Linux)", OsFingerprint.guess(64, emptyList(), "raspberrypi"))
+        assertEquals("Box / routeur", OsFingerprint.guess(64, emptyList(), "freebox"))
+    }
+
+    @Test
+    fun os_unknown() {
+        assertEquals("", OsFingerprint.guess(null, emptyList(), ""))
+    }
+
+    @Test
     fun ports_defaultEmpty() {
         val d = Device(ip = "1.2.3.4")
         assertTrue(d.ports.isEmpty())
+        assertTrue(d.os.isEmpty())
+        assertNull(d.ttl)
         assertFalse(d.alive.not())
     }
 }

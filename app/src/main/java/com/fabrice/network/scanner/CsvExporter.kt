@@ -11,12 +11,13 @@ object CsvExporter {
     /** En-têtes + lignes, avec BOM UTF-8. */
     fun buildCsv(devices: List<Device>): String = buildString {
         append('\uFEFF') // BOM UTF-8
-        appendLine("IP;MAC;Fabricant;Nom réseau;Statut")
+        appendLine("IP;MAC;Fabricant;Nom réseau;Système;Statut")
         devices.forEach { d ->
             append(csv(d.ip)); append(';')
             append(csv(d.mac)); append(';')
             append(csv(d.vendor)); append(';')
             append(csv(d.hostname)); append(';')
+            append(csv(d.os)); append(';')
             appendLine(if (d.alive) "En ligne" else "Vu récemment (ARP)")
         }
     }
