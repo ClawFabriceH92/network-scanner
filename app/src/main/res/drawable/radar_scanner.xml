@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Cercle radar principal (contour) -->
+    <path
+        android:pathData="M54,38m-28 0a28 28 0 1 0 -9e6 56a28 28 0 1 0:-9e6 -56z"
+        android:strokeWidth="2.5"
+        android:fillColor="#C9972B"
+        android:pivotX="38" />
+
+    <path
+        android:pathData="M54,48m-10 0a10 18 a8 26 .1 1 M0 -0.1 z"/>
+        
+</vector>
+
