@@ -26,13 +26,11 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -47,6 +45,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -79,6 +78,10 @@ fun ScannerScreen() {
     var error by remember { mutableStateOf<String?>(null) }
     var selected by remember { mutableStateOf<Device?>(null) }
     var newDevices by remember { mutableStateOf<List<Device>>(emptyList()) }
+    // Clés des appareils absents de l'historique avant le dernier scan → badges 🆕
+    var newKeys by remember { mutableStateOf(setOf<String>()) }
+    // Force la recomposition des cartes après renommage/favori
+    var refreshTick by remember { mutableStateOf(0) }
     var scanCount by remember { mutableStateOf(0) }
 
     fun runScan() {
@@ -87,6 +90,7 @@ fun ScannerScreen() {
             error = null
             progress = 0
             newDevices = emptyList()
+            newKeys = emptySet()
             val oui = OuiDatabase.load(context)
             val result = try {
                 NetworkScanner.scan(oui, scanPorts = true) { done, total -> progress = done }
@@ -94,16 +98,20 @@ fun ScannerScreen() {
                 error = e.message ?: "Erreur inconnue"
                 emptyList()
             }
-            // Détection des nouveaux appareils par rapport au dernier scan connu
+            // Détection des nouveaux appareils par rapport à l'historique connu
             if (result.isNotEmpty()) {
                 val previous = historyStore.load()
                 val fresh = ScanHistory.detectNewDevices(previous, result)
-                if (fresh.isNotEmpty()) newDevices = fresh
+                if (fresh.isNotEmpty()) {
+                    newDevices = fresh
+                    newKeys = fresh.map { ScanHistory.identityKey(it) }.toSet()
+                }
                 historyStore.save(result)
             }
             devices = result
             scanning = false
             scanCount++
+            refreshTick++
         }
     }
 
@@ -179,10 +187,14 @@ fun ScannerScreen() {
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(devices, key = { it.ip }) { device ->
+                        val key = ScanHistory.identityKey(device)
+                        // Lecture du tick pour recomposer après renommage/favori
+                        @Suppress("UNUSED_EXPRESSION") refreshTick
                         DeviceCard(
                             device = device,
                             displayName = deviceStore.displayName(device),
-                            isFavorite = deviceStore.isFavorite(ScanHistory.identityKey(device)),
+                            isFavorite = deviceStore.isFavorite(key),
+                            isNew = key in newKeys,
                             onClick = { selected = device }
                         )
                     }
@@ -192,12 +204,14 @@ fun ScannerScreen() {
     }
 
     selected?.let { device ->
+        val key = ScanHistory.identityKey(device)
         DeviceDialog(
             device = device,
             store = deviceStore,
+            isNew = key in newKeys,
             onDismiss = { selected = null },
+            onSaved = { refreshTick++ },
             onWol = {
-                val key = ScanHistory.identityKey(device)
                 val mac = device.mac
                 val subnet = NetworkScanner.detectSubnet()
                 val broadcast = if (subnet != null) NetworkScanner.broadcastAddress(subnet.first, subnet.second)
@@ -244,6 +258,7 @@ private fun DeviceCard(
     device: Device,
     displayName: String,
     isFavorite: Boolean,
+    isNew: Boolean,
     onClick: () -> Unit
 ) {
     Card(
@@ -264,6 +279,7 @@ private fun DeviceCard(
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (isFavorite) Text("⭐ ", style = MaterialTheme.typography.titleSmall)
+                    if (isNew) NewBadge()
                     Text(
                         text = displayName,
                         style = MaterialTheme.typography.titleSmall,
@@ -276,6 +292,14 @@ private fun DeviceCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                if (device.mac.isNotBlank()) {
+                    Text(
+                        text = device.mac,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 if (device.ports.isNotEmpty()) {
                     Spacer(Modifier.height(4.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -310,6 +334,23 @@ private fun DeviceCard(
 }
 
 @Composable
+private fun NewBadge() {
+    Box(
+        modifier = Modifier
+            .background(Color(0xFF2E7D32), RoundedCornerShape(4.dp))
+            .padding(horizontal = 4.dp, vertical = 1.dp)
+    ) {
+        Text(
+            "nouveau",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White,
+            fontWeight = FontWeight.Bold
+        )
+    }
+    Spacer(Modifier.width(4.dp))
+}
+
+@Composable
 private fun PortBadge(port: Int) {
     Box(
         modifier = Modifier
@@ -331,7 +372,9 @@ private fun PortBadge(port: Int) {
 private fun DeviceDialog(
     device: Device,
     store: DeviceStore,
+    isNew: Boolean,
     onDismiss: () -> Unit,
+    onSaved: () -> Unit,
     onWol: () -> Unit
 ) {
     val key = ScanHistory.identityKey(device)
@@ -349,6 +392,7 @@ private fun DeviceDialog(
                 InfoRow("Fabricant", device.vendor.ifBlank { "inconnu" })
                 if (device.hostname.isNotBlank()) InfoRow("Nom réseau", device.hostname)
                 InfoRow("Statut", if (device.alive) "En ligne" else "Vu récemment (ARP)")
+                InfoRow("Historique", if (isNew) "🆕 Nouveau sur le réseau" else "✅ Déjà vu auparavant")
                 if (device.ports.isNotEmpty()) {
                     Spacer(Modifier.height(8.dp))
                     Text("Services ouverts :", style = MaterialTheme.typography.labelMedium)
@@ -376,6 +420,7 @@ private fun DeviceDialog(
                     TextButton(onClick = {
                         isFav = !isFav
                         store.setFavorite(key, isFav)
+                        onSaved()
                     }) {
                         Text(if (isFav) "★ Favori" else "☆ Favori")
                     }
@@ -390,6 +435,7 @@ private fun DeviceDialog(
         confirmButton = {
             TextButton(onClick = {
                 store.setCustomName(key, customName)
+                onSaved()
                 onDismiss()
             }) { Text("OK") }
         },
@@ -406,7 +452,7 @@ private fun InfoRow(label: String, value: String) {
             "$label :",
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(100.dp)
+            modifier = Modifier.width(110.dp)
         )
         Text(value, style = MaterialTheme.typography.bodyMedium)
     }
