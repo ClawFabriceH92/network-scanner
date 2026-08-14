@@ -1,9 +1,13 @@
 package com.fabrice.network.scanner.ui
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.net.wifi.WifiManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -51,7 +55,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import com.fabrice.network.scanner.BluetoothScanner
 import com.fabrice.network.scanner.BuildConfig
 import com.fabrice.network.scanner.CsvExporter
 import com.fabrice.network.scanner.CveDatabaseStore
@@ -65,6 +71,7 @@ import com.fabrice.network.scanner.NetworkScanner
 import com.fabrice.network.scanner.OuiDatabase
 import com.fabrice.network.scanner.PortScanner
 import com.fabrice.network.scanner.ScanHistory
+import com.fabrice.network.scanner.SmbShareScanner
 import com.fabrice.network.scanner.VulnScanner
 import com.fabrice.network.scanner.WakeOnLan
 import kotlinx.coroutines.launch
@@ -93,8 +100,12 @@ fun ScannerScreen() {
     // Force la recomposition des cartes après renommage/favori
     var refreshTick by remember { mutableStateOf(0) }
     var scanCount by remember { mutableStateOf(0) }
-    // Onglet actif : 0 = Périphériques, 1 = Réseau
+    // Onglet actif : 0 = Périphériques, 1 = Réseau, 2 = Bluetooth
     var selectedTab by remember { mutableStateOf(0) }
+    // Scan Bluetooth
+    var btDevices by remember { mutableStateOf<List<BluetoothScanner.BtDevice>>(emptyList()) }
+    var btScanning by remember { mutableStateOf(false) }
+    var btError by remember { mutableStateOf<String?>(null) }
     // Vulnérabilités par IP (calculées après chaque scan, base CVE embarquée)
     var vulnsByIp by remember { mutableStateOf<Map<String, VulnScanner.DeviceVulns>>(emptyMap()) }
     var cveDbVersion by remember { mutableStateOf<String?>(null) }
@@ -181,6 +192,48 @@ fun ScannerScreen() {
         }
     }
 
+    // Permissions Bluetooth (Android 12+ : BLUETOOTH_SCAN + BLUETOOTH_CONNECT,
+    // et ACCESS_FINE_LOCATION pour le BLE sur certains appareils)
+    val btPermissions = remember {
+        arrayOf(
+            Manifest.permission.BLUETOOTH_SCAN,
+            Manifest.permission.BLUETOOTH_CONNECT,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        )
+    }
+    // lateinit : la lambda est assignée après le launcher (évite la forward
+    // reference — une fonction locale ne peut pas être appelée avant sa déclaration)
+    lateinit var runBtScan: (Context) -> Unit
+    val btPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { granted ->
+        if (granted.values.any { it }) {
+            runBtScan(context)
+        } else {
+            btError = "Permissions Bluetooth refusées — active-les dans les réglages."
+        }
+    }
+    runBtScan = { ctx ->
+        val missing = btPermissions.filter {
+            ContextCompat.checkSelfPermission(ctx, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isNotEmpty()) {
+            btPermissionLauncher.launch(btPermissions)
+        } else if (!BluetoothScanner.isSupported(ctx)) {
+            btError = "Bluetooth désactivé — active-le dans les réglages."
+        } else {
+            scope.launch {
+                btScanning = true
+                btError = null
+                val oui = OuiDatabase.load(ctx)
+                btDevices = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    BluetoothScanner.scan(ctx, durationMs = 8_000, oui = oui)
+                }
+                btScanning = false
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -223,7 +276,7 @@ fun ScannerScreen() {
             } else if (screen == 2) {
                 AboutScreen()
             } else {
-            // Onglets : Périphériques / Réseau
+            // Onglets : Périphériques / Réseau / Bluetooth
             TabRow(selectedTabIndex = selectedTab) {
                 Tab(
                     selected = selectedTab == 0,
@@ -235,9 +288,21 @@ fun ScannerScreen() {
                     onClick = { selectedTab = 1 },
                     text = { Text("🌐 Réseau") }
                 )
+                Tab(
+                    selected = selectedTab == 2,
+                    onClick = { selectedTab = 2 },
+                    text = { Text("📡 Bluetooth") }
+                )
             }
             if (selectedTab == 1) {
                 NetworkScreen()
+            } else if (selectedTab == 2) {
+                BluetoothScreen(
+                    devices = btDevices,
+                    scanning = btScanning,
+                    error = btError,
+                    onScan = { runBtScan(context) }
+                )
             } else {
             if (scanning) {
                 Row(
@@ -704,6 +769,10 @@ private fun DeviceDialog(
                         )
                     }
                 }
+                if (device.smbShares.isNotEmpty()) {
+                    Spacer(Modifier.height(12.dp))
+                    SmbSection(device.smbShares)
+                }
                 Spacer(Modifier.height(12.dp))
                 OutlinedTextField(
                     value = customName,
@@ -756,6 +825,50 @@ private fun InfoRow(label: String, value: String) {
             modifier = Modifier.width(110.dp)
         )
         Text(value, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/** Section partages SMB (dossiers partagés, y compris cachés). */
+@Composable
+private fun SmbSection(shares: List<SmbShareScanner.SmbShare>) {
+    val accessible = shares.count { it.accessible }
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("📁 Partages SMB", style = MaterialTheme.typography.labelMedium)
+            Spacer(Modifier.weight(1f))
+            Text(
+                "$accessible/${shares.size} accessibles",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        shares.forEach { share ->
+            Row(Modifier.padding(vertical = 2.dp)) {
+                Text(
+                    if (share.accessible) "🟢" else "🔒",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    share.name,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.width(110.dp)
+                )
+                Text(
+                    share.note,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        Text(
+            "Partages testés en accès invité. 🔒 = existe mais protégé.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 

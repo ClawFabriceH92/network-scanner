@@ -21,7 +21,8 @@ data class Device(
     val type: String = "Inconnu",
     val banner: String = "",
     val latencyMs: Int? = null,
-    val upnp: UpnpProbe.UpnpInfo? = null
+    val upnp: UpnpProbe.UpnpInfo? = null,
+    val smbShares: List<SmbShareScanner.SmbShare> = emptyList()
 )
 
 /** Résultat d'un ping : vivant ? + TTL de la réponse (pour l'OS) + latence. */
@@ -182,11 +183,15 @@ object NetworkScanner {
         // Découverte UPnP/SSDP : une seule requête multicast, réponses par IP
         val upnpByIp = UpnpProbe.discover()
 
-        // Fusion ping + table ARP (double lecture espacée de ~500 ms : la table
-        // ARP Android ne contient que les échanges récents, on capte ainsi plus
-        // de MAC que sur une seule lecture).
-        val arp = mergeArp(readArp(), run {
-            kotlinx.coroutines.delay(500)
+        // Fusion ping + table ARP — TRIPLE lecture espacée : la table ARP
+        // Android ne contient que les échanges récents, et un appareil qui
+        // filtre ICMP n'apparaît qu'après un échange ARP. Trois lectures à
+        // ~700 ms captent plus de MAC que deux (périphériques cachés).
+        val arp = mergeArp(mergeArp(readArp(), run {
+            kotlinx.coroutines.delay(700)
+            readArp()
+        }), run {
+            kotlinx.coroutines.delay(700)
             readArp()
         })
         val allIps = (alive + arp.keys).toSortedSet()
@@ -209,6 +214,12 @@ object NetworkScanner {
             // pour préciser l'OS réel et enrichir la fiche appareil.
             val banner = if (alive.contains(host)) grabService(host, ports) else ""
             val os = OsFingerprint.guess(ttlMap[host], ports, hostname, banner.ifBlank { null })
+            // Partages SMB (dossiers partagés, y compris cachés $) — seulement si
+            // le port 445 est ouvert, jamais bloquant (runCatching).
+            val smbShares = if (alive.contains(host) && 445 in ports) {
+                runCatching { SmbShareScanner.scanShares(host, timeoutMs = 1_500) }
+                    .getOrDefault(emptyList())
+            } else emptyList()
             // Infos UPnP éventuelles (friendlyName, fabricant, modèle…)
             var upnp = upnpByIp[host]
             if (upnp != null && upnp.location.isNotBlank() && !upnp.hasInfo) {
@@ -227,7 +238,8 @@ object NetworkScanner {
                 type = DeviceType.classify(vendor, hostname, ports, os),
                 banner = banner,
                 latencyMs = latencyMap[host],
-                upnp = upnp
+                upnp = upnp,
+                smbShares = smbShares
             )
         }.sortedBy { it.ip }
     }

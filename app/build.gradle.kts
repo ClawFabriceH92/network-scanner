@@ -12,8 +12,8 @@ android {
         applicationId = "com.fabrice.network.scanner"
         minSdk = 26
         targetSdk = 35
-        versionCode = 11
-        versionName = "1.0.0"
+        versionCode = 12
+        versionName = "1.1.0"
     }
 
     buildTypes {
@@ -55,6 +55,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    // Client SMB (partages réseau) — pure Java, compatible Android
+    implementation("com.hierynomus:smbj:0.13.0")
+    implementation("org.slf4j:slf4j-nop:2.0.13")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")

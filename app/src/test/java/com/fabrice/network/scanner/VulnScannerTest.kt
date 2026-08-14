@@ -236,4 +236,30 @@ class VulnScannerTest {
         // Base inconnue = considérée obsolète (à mettre à jour)
         assertTrue(CveUpdateManager.isStale(""))
     }
+
+    // ---------- SmbShareScanner (logique pure) ----------
+
+    @Test
+    fun smb_defaultSharesIncludesHiddenAdminShares() {
+        assertTrue(SmbShareScanner.DEFAULT_SHARES.contains("C\$"))
+        assertTrue(SmbShareScanner.DEFAULT_SHARES.contains("D\$"))
+        assertTrue(SmbShareScanner.DEFAULT_SHARES.contains("ADMIN\$"))
+        assertTrue(SmbShareScanner.DEFAULT_SHARES.contains("IPC\$"))
+    }
+
+    @Test
+    fun smb_defaultSharesHasCommonNames() {
+        assertTrue(SmbShareScanner.DEFAULT_SHARES.contains("public"))
+        assertTrue(SmbShareScanner.DEFAULT_SHARES.contains("share"))
+        assertTrue(SmbShareScanner.DEFAULT_SHARES.contains("backup"))
+        // Pas de doublons
+        assertEquals(SmbShareScanner.DEFAULT_SHARES.size, SmbShareScanner.DEFAULT_SHARES.toSet().size)
+    }
+
+    @Test
+    fun smb_scanShares_noServerReturnsEmpty() {
+        // IP injoignable (192.0.2.x = TEST-NET, jamais routée) → pas de serveur SMB
+        val result = SmbShareScanner.scanShares("192.0.2.254", timeoutMs = 800)
+        assertTrue(result.isEmpty())
+    }
 }
