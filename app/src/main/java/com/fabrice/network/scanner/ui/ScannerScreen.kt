@@ -31,6 +31,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -87,6 +89,8 @@ fun ScannerScreen() {
     // Force la recomposition des cartes après renommage/favori
     var refreshTick by remember { mutableStateOf(0) }
     var scanCount by remember { mutableStateOf(0) }
+    // Onglet actif : 0 = Périphériques, 1 = Réseau
+    var selectedTab by remember { mutableStateOf(0) }
 
     fun runScan() {
         scope.launch {
@@ -148,6 +152,22 @@ fun ScannerScreen() {
                 .padding(padding)
                 .fillMaxSize()
         ) {
+            // Onglets : Périphériques / Réseau
+            TabRow(selectedTabIndex = selectedTab) {
+                Tab(
+                    selected = selectedTab == 0,
+                    onClick = { selectedTab = 0 },
+                    text = { Text("📱 Périphériques") }
+                )
+                Tab(
+                    selected = selectedTab == 1,
+                    onClick = { selectedTab = 1 },
+                    text = { Text("🌐 Réseau") }
+                )
+            }
+            if (selectedTab == 1) {
+                NetworkScreen()
+            } else {
             if (scanning) {
                 Row(
                     modifier = Modifier
@@ -237,6 +257,7 @@ fun ScannerScreen() {
                     }
                 }
             }
+            } // fin onglet Périphériques (else)
         }
     }
 

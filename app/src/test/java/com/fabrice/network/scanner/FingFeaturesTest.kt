@@ -196,6 +196,34 @@ class FingFeaturesTest {
         assertEquals("Windows (OpenSSH)", BannerGrab.osFromSshBanner("SSH-2.0-OpenSSH_for_Windows_8.1"))
     }
 
+    // ---------- NetworkInfoProvider ----------
+
+    @Test
+    fun routeHex_toIp() {
+        // Little-endian : 0102000A → 10.0.2.1
+        assertEquals("10.0.2.1", NetworkInfoProvider.parseRouteHex("0102000A"))
+        // C0A80001 → 1.0.168.192
+        assertEquals("1.0.168.192", NetworkInfoProvider.parseRouteHex("C0A80001"))
+        assertEquals("", NetworkInfoProvider.parseRouteHex("1234"))
+        assertEquals("", NetworkInfoProvider.parseRouteHex("zzzzzzzz"))
+    }
+
+    @Test
+    fun maskForPrefix() {
+        assertEquals("255.255.255.0", NetworkInfoProvider.maskForPrefix(24))
+        assertEquals("255.255.0.0", NetworkInfoProvider.maskForPrefix(16))
+        assertEquals("255.0.0.0", NetworkInfoProvider.maskForPrefix(8))
+        assertEquals("", NetworkInfoProvider.maskForPrefix(33))
+    }
+
+    @Test
+    fun bandForFrequency() {
+        assertEquals("2,4 GHz", NetworkInfoProvider.bandForFrequency(2412))
+        assertEquals("5 GHz", NetworkInfoProvider.bandForFrequency(5180))
+        assertEquals("6 GHz", NetworkInfoProvider.bandForFrequency(5925))
+        assertEquals("", NetworkInfoProvider.bandForFrequency(0))
+    }
+
     // ---------- OsFingerprint ----------
 
     @Test
