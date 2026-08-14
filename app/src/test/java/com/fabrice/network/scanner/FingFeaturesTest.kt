@@ -205,6 +205,43 @@ class FingFeaturesTest {
         assertEquals("❓", DeviceType.icon("Inconnu"))
     }
 
+    // ---------- WifiQuality ----------
+
+    @Test
+    fun wifiLevel_thresholds() {
+        assertEquals(4, WifiQuality.level(-45))
+        assertEquals(4, WifiQuality.level(-50))
+        assertEquals(3, WifiQuality.level(-55))
+        assertEquals(2, WifiQuality.level(-65))
+        assertEquals(1, WifiQuality.level(-75))
+        assertEquals(0, WifiQuality.level(-85))
+    }
+
+    @Test
+    fun wifiLabel_thresholds() {
+        assertEquals("Excellente", WifiQuality.label(-45))
+        assertEquals("Bonne", WifiQuality.label(-55))
+        assertEquals("Moyenne", WifiQuality.label(-65))
+        assertEquals("Faible", WifiQuality.label(-75))
+        assertEquals("Très faible", WifiQuality.label(-90))
+        assertEquals("inconnue", WifiQuality.label(Int.MIN_VALUE))
+    }
+
+    @Test
+    fun wifiFormat() {
+        assertEquals("-57 dBm", WifiQuality.formatRssi(-57))
+        assertEquals("—", WifiQuality.formatRssi(Int.MIN_VALUE))
+    }
+
+    // ---------- SpeedTest format ----------
+
+    @Test
+    fun speedFormat() {
+        assertEquals("12,3", SpeedTest.formatMbps(12.34))
+        assertEquals("—", SpeedTest.formatMbps(0.0))
+        assertEquals("—", SpeedTest.formatMbps(-1.0))
+    }
+
     @Test
     fun ports_defaultEmpty() {
         val d = Device(ip = "1.2.3.4")

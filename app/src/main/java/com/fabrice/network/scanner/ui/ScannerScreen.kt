@@ -158,6 +158,7 @@ fun ScannerScreen() {
             if (newDevices.isNotEmpty()) {
                 NewDevicesBanner(newDevices)
             }
+            NetworkPanel()
             error?.let {
                 Text(
                     it,
