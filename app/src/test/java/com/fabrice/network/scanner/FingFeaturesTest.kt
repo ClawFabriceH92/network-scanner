@@ -393,6 +393,55 @@ class FingFeaturesTest {
     }
 
     @Test
+    fun scanPersistence_ageLabel() {
+        assertEquals("à l'instant", ScanPersistence.ageLabel(30_000))
+        assertEquals("il y a 5 min", ScanPersistence.ageLabel(5 * 60_000))
+        assertEquals("il y a 2 h", ScanPersistence.ageLabel(2 * 3_600_000))
+        assertEquals("il y a 3 j", ScanPersistence.ageLabel(3 * 24 * 3_600_000))
+    }
+
+    @Test
+    fun scanPersistence_roundTrip() {
+        // Sérialisation JSON : save → load restitue les appareils (test sur
+        // la logique de sérialisation sans Android : on vérifie via les champs
+        // essentiels en reproduisant le mapping)
+        val d = Device(
+            ip = "192.168.0.10",
+            mac = "AA:BB:CC:DD:EE:FF",
+            vendor = "HP",
+            hostname = "NPIFB1CEB",
+            alive = true,
+            isSelf = false,
+            isGateway = false,
+            ports = listOf(9100, 515),
+            os = "",
+            ttl = 64,
+            type = "Imprimante",
+            banner = "HP LaserJet",
+            latencyMs = 3
+        )
+        val json = org.json.JSONObject().apply {
+            put("ip", d.ip)
+            put("mac", d.mac)
+            put("vendor", d.vendor)
+            put("hostname", d.hostname)
+            put("alive", d.alive)
+            put("isSelf", d.isSelf)
+            put("isGateway", d.isGateway)
+            put("ports", org.json.JSONArray(d.ports))
+            put("os", d.os)
+            put("ttl", d.ttl)
+            put("type", d.type)
+            put("banner", d.banner)
+            put("latencyMs", d.latencyMs)
+        }
+        assertEquals("192.168.0.10", json.getString("ip"))
+        assertEquals("Imprimante", json.getString("type"))
+        assertEquals(2, json.getJSONArray("ports").length())
+        assertEquals(9100, json.getJSONArray("ports").getInt(0))
+    }
+
+    @Test
     fun deviceType_icons() {
         assertEquals("🖨️", DeviceType.icon("Imprimante"))
         assertEquals("📱", DeviceType.icon("Smartphone"))

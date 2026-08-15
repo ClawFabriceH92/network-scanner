@@ -48,6 +48,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -83,6 +84,7 @@ import com.fabrice.network.scanner.NetworkScanner
 import com.fabrice.network.scanner.OuiDatabase
 import com.fabrice.network.scanner.PdfAuditReport
 import com.fabrice.network.scanner.PortScanner
+import com.fabrice.network.scanner.ScanPersistence
 import com.fabrice.network.scanner.ScanHistory
 import com.fabrice.network.scanner.SmbShareScanner
 import com.fabrice.network.scanner.VulnScanner
@@ -108,6 +110,20 @@ fun ScannerScreen() {
     var newDevices by remember { mutableStateOf<List<Device>>(emptyList()) }
     // IP locale de l'appareil qui lance le scan (affichée après le premier scan)
     var selfIp by remember { mutableStateOf<String?>(null) }
+    // Dernier scan persisté : chargé au démarrage pour éviter de rescanner
+    var lastScanAge by remember { mutableStateOf<Long?>(null) }
+    var scanSource by remember { mutableStateOf("") } // "" = scan frais, sinon "sauvegarde"
+
+    // Charge le dernier scan sauvegardé au démarrage (pas de rescan obligatoire)
+    LaunchedEffect(Unit) {
+        val saved = ScanPersistence.load(context)
+        if (saved != null && saved.isNotEmpty() && devices.isEmpty()) {
+            devices = saved
+            scanSource = "sauvegarde"
+            lastScanAge = ScanPersistence.ageMs(context)
+            selfIp = saved.firstOrNull { it.isSelf }?.ip
+        }
+    }
     // Clés des appareils absents de l'historique avant le dernier scan → badges 🆕
     var newKeys by remember { mutableStateOf(setOf<String>()) }
     // Force la recomposition des cartes après renommage/favori
@@ -213,6 +229,9 @@ fun ScannerScreen() {
                 boxStatus = null
             }
             devices = result
+            ScanPersistence.save(context, result)
+            scanSource = ""
+            lastScanAge = null
             scanning = false
             scanCount++
             refreshTick++
@@ -257,10 +276,22 @@ fun ScannerScreen() {
     val btPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { granted ->
-        if (granted.values.any { it }) {
-            runBtScan(context)
-        } else {
-            btError = "Permissions Bluetooth refusées — active-les dans les réglages."
+        if (granted.values.any { it }) runBtScan(context) else {
+            btError = "Permissions refusées — active la localisation et le Bluetooth."
+        }
+    }
+
+    // Demande la localisation au démarrage si absente (nécessaire pour lire le
+    // SSID/nom du Wi-Fi sur Android 8.1+ ET pour le scan BLE)
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { _ -> /* le scan réseau fonctionne sans, le SSID s'affiche si accordée */ }
+
+    LaunchedEffect(Unit) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
         }
     }
     runBtScan = { ctx ->
@@ -490,9 +521,21 @@ fun ScannerScreen() {
                                         .padding(horizontal = 12.dp, vertical = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("📱 Scan depuis ", style = MaterialTheme.typography.labelMedium)
+                                    if (scanSource == "sauvegarde") {
+                                        Text("💾 ", style = MaterialTheme.typography.labelMedium)
+                                    } else {
+                                        Text("📱 ", style = MaterialTheme.typography.labelMedium)
+                                    }
                                     Text(
-                                        selfIp ?: "—",
+                                        if (scanSource == "sauvegarde") "Dernier scan " else "Scan depuis ",
+                                        style = MaterialTheme.typography.labelMedium
+                                    )
+                                    Text(
+                                        if (scanSource == "sauvegarde") {
+                                            lastScanAge?.let { ScanPersistence.ageLabel(it) } ?: "—"
+                                        } else {
+                                            selfIp ?: "—"
+                                        },
                                         style = MaterialTheme.typography.labelMedium,
                                         fontFamily = FontFamily.Monospace,
                                         color = MaterialTheme.colorScheme.primary,
