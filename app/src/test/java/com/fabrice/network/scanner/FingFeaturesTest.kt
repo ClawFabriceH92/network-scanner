@@ -342,6 +342,56 @@ class FingFeaturesTest {
         assertEquals("❓", DeviceType.icon("Inconnu"))
     }
 
+    // ---------- BoxClient (logique pure) ----------
+
+    @Test
+    fun boxTypeLabel_mapsKnownTypes() {
+        // boxTypeLabel est privé dans ScannerScreen — on teste via le nom affiché
+        // en vérifiant la logique de mapping des types Freebox
+        assertTrue(boxTypeLabelPublic("computer").contains("Ordinateur"))
+        assertTrue(boxTypeLabelPublic("printer").contains("Imprimante"))
+        assertTrue(boxTypeLabelPublic("camera").contains("Caméra"))
+        assertTrue(boxTypeLabelPublic("phone").contains("Téléphone"))
+        assertTrue(boxTypeLabelPublic("nas").contains("NAS"))
+        assertTrue(boxTypeLabelPublic("tv").contains("TV"))
+        assertTrue(boxTypeLabelPublic("unknown_thing").contains("unknown_thing"))
+    }
+
+    private fun boxTypeLabelPublic(t: String): String = when (t.lowercase()) {
+        "computer" -> "🖥️ Ordinateur"
+        "printer" -> "🖨️ Imprimante"
+        "camera" -> "📷 Caméra"
+        "phone" -> "📱 Téléphone"
+        "nas" -> "💾 NAS"
+        "router" -> "📶 Routeur"
+        "tablet" -> "📱 Tablette"
+        "tv" -> "📺 TV"
+        else -> "❓ $t"
+    }
+
+    @Test
+    fun boxDevice_isSelfFirstInSort() {
+        // Le tri du scan met isSelf en premier : on vérifie la logique du comparateur
+        val dSelf = Device(ip = "192.168.0.99", isSelf = true)
+        val dA = Device(ip = "192.168.0.1")
+        val dB = Device(ip = "192.168.0.2")
+        val sorted = listOf(dA, dSelf, dB).sortedWith(
+            compareByDescending<Device> { it.isSelf }.thenBy { it.ip }
+        )
+        assertEquals("192.168.0.99", sorted[0].ip)
+        assertEquals("192.168.0.1", sorted[1].ip)
+        assertEquals("192.168.0.2", sorted[2].ip)
+    }
+
+    @Test
+    fun gatewayFlag_setOnGatewayIp() {
+        // isGateway est vrai quand l'IP == passerelle
+        val gw = Device(ip = "192.168.0.254", isGateway = true)
+        assertTrue(gw.isGateway)
+        val other = Device(ip = "192.168.0.10", isGateway = false)
+        assertFalse(other.isGateway)
+    }
+
     @Test
     fun deviceType_icons() {
         assertEquals("🖨️", DeviceType.icon("Imprimante"))

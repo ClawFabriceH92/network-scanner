@@ -15,6 +15,7 @@ data class Device(
     val hostname: String = "",
     val alive: Boolean = true,
     val isSelf: Boolean = false,
+    val isGateway: Boolean = false,
     val ports: List<Int> = emptyList(),
     val os: String = "",
     val ttl: Int? = null,
@@ -203,6 +204,7 @@ object NetworkScanner {
         val vendorCache = HashMap<String, String>()
 
         val localIp = ip
+        val gatewayIp = NetworkInfoProvider.readGateway()
         allIps.map { host ->
             val mac = arp[host] ?: ""
             var vendor = vendorFor(mac, oui)
@@ -236,6 +238,7 @@ object NetworkScanner {
                 hostname = hostname,
                 alive = alive.contains(host),
                 isSelf = host == localIp,
+                isGateway = host == gatewayIp,
                 ports = ports,
                 ttl = ttlMap[host],
                 os = os,
@@ -245,7 +248,12 @@ object NetworkScanner {
                 upnp = upnp,
                 smbShares = smbShares
             )
-        }.sortedBy { it.ip }
+            // Tri : le périphérique qui lance le scan (isSelf) TOUT EN HAUT,
+            // puis les autres par IP.
+        }.sortedWith(
+            compareByDescending<Device> { it.isSelf }
+                .thenBy { it.ip }
+        )
     }
 
     /**

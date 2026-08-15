@@ -48,9 +48,17 @@ fun NetworkScreen() {
     val context = LocalContext.current
     var info by remember { mutableStateOf(NetworkInfoProvider.read(context)) }
     var rssi by remember { mutableStateOf(WifiQuality.currentRssi(context)) }
+    var publicIp by remember { mutableStateOf<String?>(null) }
     // Historique RSSI : (secondes, dBm) — 120 échantillons = 2 min
     val history = remember { mutableListOf<Pair<Long, Int>>() }
     val startTime = remember { System.currentTimeMillis() }
+
+    // Récupère l'IP publique (WAN) au chargement, hors thread UI
+    LaunchedEffect(Unit) {
+        publicIp = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            NetworkInfoProvider.fetchPublicIp()
+        }
+    }
 
     // Rafraîchit infos + RSSI toutes les 2 s
     LaunchedEffect(Unit) {
@@ -95,6 +103,7 @@ fun NetworkScreen() {
                 InfoRow("BSSID", info.bssid.ifBlank { "non disponible" })
                 InfoRow("Réseau", info.networkAddress.ifBlank { "—" } + if (info.mask.isNotBlank()) " / ${info.mask}" else "")
                 InfoRow("Passerelle", info.gateway.ifBlank { "inconnue" })
+                InfoRow("IP publique", publicIp ?: "…")
                 InfoRow("DNS", info.dns.joinToString(", ").ifBlank { "inconnu" })
                 InfoRow("Bande", info.band.ifBlank { "—" })
                 InfoRow("Débit liaison", if (info.linkSpeedMbps > 0) "${info.linkSpeedMbps} Mbps" else "—")

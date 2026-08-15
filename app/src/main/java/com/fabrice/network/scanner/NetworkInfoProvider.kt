@@ -23,7 +23,6 @@ object NetworkInfoProvider {
         val band: String
             get() = bandForFrequency(frequencyMhz)
     }
-
     /** Lit toutes les infos réseau Android. */
     fun read(context: Context): NetworkInfo {
         val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
@@ -104,5 +103,32 @@ object NetworkInfoProvider {
         mhz in 4900..5900 -> "5 GHz"
         mhz in 5901..7125 -> "6 GHz"
         else -> ""
+    }
+
+    /** Récupère l'adresse IP publique (WAN) via une API. null si hors-ligne. */
+    fun fetchPublicIp(timeoutMs: Int = 8_000): String? {
+        val apis = listOf(
+            "https://api.ipify.org",
+            "https://ifconfig.me/ip",
+            "https://ipinfo.io/ip"
+        )
+        for (api in apis) {
+            try {
+                val conn = java.net.URL(api).openConnection() as java.net.HttpURLConnection
+                conn.connectTimeout = timeoutMs
+                conn.readTimeout = timeoutMs
+                conn.setRequestProperty("User-Agent", "NetworkScanner/1.0")
+                if (conn.responseCode == 200) {
+                    val ip = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }.trim()
+                    conn.disconnect()
+                    if (ip.matches(Regex("^\\d{1,3}(\\.\\d{1,3}){3}$"))) return ip
+                } else {
+                    conn.disconnect()
+                }
+            } catch (e: Exception) {
+                // essaie l'API suivante
+            }
+        }
+        return null
     }
 }

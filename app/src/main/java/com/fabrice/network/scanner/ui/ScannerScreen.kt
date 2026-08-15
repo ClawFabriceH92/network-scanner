@@ -67,6 +67,8 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.fabrice.network.scanner.BluetoothScanner
+import com.fabrice.network.scanner.BoxClient
+import com.fabrice.network.scanner.BoxManager
 import com.fabrice.network.scanner.BuildConfig
 import com.fabrice.network.scanner.CsvExporter
 import com.fabrice.network.scanner.CveDatabaseStore
@@ -75,6 +77,7 @@ import com.fabrice.network.scanner.CveUpdateManager
 import com.fabrice.network.scanner.Device
 import com.fabrice.network.scanner.DeviceStore
 import com.fabrice.network.scanner.DeviceType
+import com.fabrice.network.scanner.FreeboxBoxClient
 import com.fabrice.network.scanner.HistoryStore
 import com.fabrice.network.scanner.NetworkScanner
 import com.fabrice.network.scanner.OuiDatabase
@@ -119,6 +122,9 @@ fun ScannerScreen() {
     // Vulnérabilités par IP (calculées après chaque scan, base CVE embarquée)
     var vulnsByIp by remember { mutableStateOf<Map<String, VulnScanner.DeviceVulns>>(emptyMap()) }
     var cveDbVersion by remember { mutableStateOf<String?>(null) }
+    // Équipements vus par la box (baux DHCP) — complète le scan direct
+    var boxDevices by remember { mutableStateOf<List<BoxClient.BoxDevice>>(emptyList()) }
+    var boxStatus by remember { mutableStateOf<String?>(null) } // null = pas de box, "" = ok
     // Écran : 0 = scan, 1 = aide, 2 = à propos, 3 = nouveaux appareils
     var screen by remember { mutableStateOf(0) }
     // Mode de scan de ports : 0 = standard (16), 1 = élargi (52) — persisté
@@ -187,6 +193,24 @@ fun ScannerScreen() {
             vulnsByIp = result.associate { device ->
                 val services = VulnScanner.parseBanner(device.banner)
                 device.ip to VulnScanner.match(services, cveDb)
+            }
+            // Équipements vus par la box (baux DHCP) — complète le scan
+            val box = BoxManager.detect(context)
+            if (box != null) {
+                boxStatus = ""
+                val fetched = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    box.fetchDevices()
+                }
+                if (fetched != null) {
+                    boxDevices = fetched
+                    boxStatus = "" // ok
+                } else {
+                    boxDevices = emptyList()
+                    boxStatus = "Box ${box.name} non autorisée — ouvre l'app, puis valide l'autorisation sur la box."
+                }
+            } else {
+                boxDevices = emptyList()
+                boxStatus = null
             }
             devices = result
             scanning = false
@@ -493,6 +517,24 @@ fun ScannerScreen() {
                                     }
                                 )
                             }
+                            // Équipements vus par la box (baux DHCP)
+                            if (boxStatus != null) {
+                                BoxDevicesSection(
+                                    status = boxStatus ?: "",
+                                    devices = boxDevices,
+                                    onAuthorize = {
+                                        val box = BoxManager.detect(context)
+                                        if (box is FreeboxBoxClient) {
+                                            box.requestAuthorization()
+                                            scope.launch {
+                                                snackbar.showSnackbar(
+                                                    "Autorisation envoyée — valide-la sur la box, puis rescanne."
+                                                )
+                                            }
+                                        }
+                                    }
+                                )
+                            }
                             LazyColumn(
                                 modifier = Modifier.fillMaxSize(),
                                 contentPadding = PaddingValues(
@@ -593,6 +635,117 @@ private fun NewDevicesBanner(newDevices: List<Device>, onClick: () -> Unit) {
             )
         }
     }
+}
+
+/** Section « Vu par la box » : équipements des baux DHCP, en accordéon. */
+@Composable
+private fun BoxDevicesSection(
+    status: String,
+    devices: List<BoxClient.BoxDevice>,
+    onAuthorize: () -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+            .clickable { expanded = !expanded },
+        colors = CardDefaults.cardColors(
+            containerColor = Color(0xFFEDE7DA)
+        )
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "📋 Vu par la box (${devices.size})",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.weight(1f))
+                Text(if (expanded) "▲" else "▼", style = MaterialTheme.typography.labelMedium)
+            }
+            if (status.isNotBlank()) {
+                Text(
+                    status,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+                if (status.contains("autorisée")) {
+                    TextButton(onClick = onAuthorize) {
+                        Text("🔑 Autoriser l'app sur la box")
+                    }
+                }
+            } else if (expanded) {
+                Spacer(Modifier.height(8.dp))
+                if (devices.isEmpty()) {
+                    Text(
+                        "Aucun équipement retourné.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    devices.sortedBy { it.name.lowercase() }.forEach { d ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                if (d.reachable) "🟢" else "⚪",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    d.name.ifBlank { "inconnu" },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1
+                                )
+                                if (d.hostType.isNotBlank() && d.hostType != "unknown") {
+                                    Text(
+                                        boxTypeLabel(d.hostType),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            if (d.ip.isNotBlank()) {
+                                Text(
+                                    d.ip,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    }
+                    if (devices.size > 10) {
+                        Text(
+                            "…et ${devices.size - 10} autres (bande défilante ci-dessous)",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Traduit le type Freebox (computer, printer…) en libellé lisible. */
+private fun boxTypeLabel(t: String): String = when (t.lowercase()) {
+    "computer" -> "🖥️ Ordinateur"
+    "printer" -> "🖨️ Imprimante"
+    "camera" -> "📷 Caméra"
+    "phone" -> "📱 Téléphone"
+    "nas" -> "💾 NAS"
+    "router" -> "📶 Routeur"
+    "tablet" -> "📱 Tablette"
+    "tv" -> "📺 TV"
+    else -> "❓ $t"
 }
 
 /** Écran plein : liste des appareils nouvellement détectés. */
@@ -792,7 +945,8 @@ private fun DeviceCard(
             .fillMaxWidth()
             .clickable(onClick = onClick),
         colors = CardDefaults.cardColors(
-            containerColor = Color.White
+            // La passerelle (box) ressort avec un fond doré clair
+            containerColor = if (device.isGateway) Color(0xFFFBF3E0) else Color.White
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
@@ -819,6 +973,7 @@ private fun DeviceCard(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (isFavorite) Text("⭐ ", style = MaterialTheme.typography.titleSmall)
                     if (isNew) NewBadge()
+                    if (device.isGateway) GatewayBadge()
                     Text(
                         text = displayName,
                         style = MaterialTheme.typography.titleSmall,
@@ -903,6 +1058,23 @@ private fun VulnBadge(v: VulnScanner.DeviceVulns) {
             fontWeight = FontWeight.Bold
         )
     }
+}
+
+@Composable
+private fun GatewayBadge() {
+    Box(
+        modifier = Modifier
+            .background(Color(0xFFC9972B), RoundedCornerShape(4.dp))
+            .padding(horizontal = 4.dp, vertical = 1.dp)
+    ) {
+        Text(
+            "📶 passerelle",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White,
+            fontWeight = FontWeight.Bold
+        )
+    }
+    Spacer(Modifier.width(4.dp))
 }
 
 @Composable
