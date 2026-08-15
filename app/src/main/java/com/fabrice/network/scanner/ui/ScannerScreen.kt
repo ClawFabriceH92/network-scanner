@@ -86,6 +86,7 @@ import com.fabrice.network.scanner.PdfAuditReport
 import com.fabrice.network.scanner.PortScanner
 import com.fabrice.network.scanner.ScanPersistence
 import com.fabrice.network.scanner.ScanHistory
+import com.fabrice.network.scanner.ServiceFingerprint
 import com.fabrice.network.scanner.SmbShareScanner
 import com.fabrice.network.scanner.VulnScanner
 import com.fabrice.network.scanner.WakeOnLan
@@ -1026,6 +1027,16 @@ private fun DeviceCard(
                 }
                 // Type d'appareil explicite (imprimante, PC, NAS…)
                 TypeBadge(device.type)
+                // Produit identifié par le banner (comme Fing)
+                val fp = remember(device.banner) { ServiceFingerprint.identify(device.banner) }
+                if (fp != null && fp.product.isNotBlank()) {
+                    Text(
+                        "🔍 ${fp.product}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF1B3A6B),
+                        fontWeight = FontWeight.Medium
+                    )
+                }
                 Text(
                     text = if (device.vendor.isNotBlank()) device.vendor
                     else if (device.os.isNotBlank()) "💻 ${device.os}"

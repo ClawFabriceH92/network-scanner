@@ -278,6 +278,12 @@ object NetworkScanner {
                 BannerGrab.textBanner(host, port)?.let { return it }
             }
         }
+        // Imprimantes : IPP (631) / JetDirect (9100) → le modèle de l'imprimante
+        // (ex: « HP LaserJet MFP E57540 ») — c'est ce qui permet d'identifier
+        // l'appareil précisément comme Fing.
+        if (BannerGrab.PRINTER_PORTS.any { it in ports }) {
+            BannerGrab.printerBanner(host)?.let { return "Imprimante: $it" }
+        }
         return ""
     }
 

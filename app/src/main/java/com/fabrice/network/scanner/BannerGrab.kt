@@ -27,6 +27,66 @@ object BannerGrab {
         143 to "IMAP"
     )
 
+    /** Ports imprimante à sonder : JetDirect 9100, IPP 631, LPD 515. */
+    val PRINTER_PORTS = listOf(9100, 631, 515)
+
+    /**
+     * Sonde une imprimante (JetDirect 9100 / IPP 631) et retourne le modèle
+     * annoncé dans la bannière — ex: « HP E57540 » ou « 9100: PRINTER ... ».
+     * Sur IPP (631), envoie une requête HTTP et lit l'en-tête Server qui
+     * contient souvent le modèle (ex: Server: HP HTTP Server; HP LaserJet...).
+     */
+    fun printerBanner(ip: String, timeoutMs: Int = 1_500): String? {
+        // 1) IPP (631) : requête HTTP OPTIONS/GET → en-tête Server riche
+        val ipp = httpServerHeaderRaw(ip, 631, timeoutMs)
+        if (!ipp.isNullOrBlank()) return ipp
+        // 2) JetDirect (9100) : le port parle parfois en texte
+        try {
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress(ip, 9100), timeoutMs)
+                socket.soTimeout = timeoutMs
+                socket.getOutputStream().write("\r\n".toByteArray())
+                socket.getOutputStream().flush()
+                val line = socket.getInputStream().bufferedReader().readLine() ?: return null
+                val t = line.trim()
+                if (t.isNotBlank() && !t.contains("PJL")) return t
+            }
+        } catch (e: Exception) {
+            // port fermé ou muet → on passe
+        }
+        return null
+    }
+
+    /** Comme httpServerHeader mais retourne TOUT le premier bloc de réponse. */
+    private fun httpServerHeaderRaw(ip: String, port: Int, timeoutMs: Int): String? {
+        return try {
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress(ip, port), timeoutMs)
+                socket.soTimeout = timeoutMs
+                socket.getOutputStream().write(
+                    "GET / HTTP/1.0\r\nHost: $ip\r\nUser-Agent: NetworkScanner/0.2.6\r\n\r\n".toByteArray()
+                )
+                socket.getOutputStream().flush()
+                val reader = socket.getInputStream().bufferedReader()
+                var line = reader.readLine() ?: return null
+                var sb = StringBuilder()
+                var guard = 0
+                while (line != null && line.isNotBlank() && guard < 10) {
+                    sb.append(line).append('\n')
+                    if (line.startsWith("Server:", ignoreCase = true)) {
+                        // l'en-tête Server est le plus informatif — on s'arrête là
+                        return line.substringAfter(':').trim()
+                    }
+                    line = reader.readLine() ?: break
+                    guard++
+                }
+                sb.toString().trim().takeIf { it.isNotBlank() }
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     /**
      * Envoie une requête HTTP minimale et retourne la valeur de l'en-tête
      * « Server », ou null si le service ne répond pas / n'est pas HTTP.

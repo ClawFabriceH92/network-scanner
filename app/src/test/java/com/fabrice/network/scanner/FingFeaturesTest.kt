@@ -400,6 +400,44 @@ class FingFeaturesTest {
         assertEquals("il y a 3 j", ScanPersistence.ageLabel(3 * 24 * 3_600_000))
     }
 
+    // ---------- Annuaire produits (fingerprint banners) ----------
+
+    @Test
+    fun fingerprint_identifiesHpPrinter() {
+        val m = ServiceFingerprint.identify("Imprimante: Server: HP HTTP Server; HP LaserJet MFP E57540")
+        assertNotNull(m)
+        assertEquals("Imprimante", m!!.type)
+        assertTrue(m.product.contains("HP"))
+    }
+
+    @Test
+    fun fingerprint_identifiesSynologyNas() {
+        val m = ServiceFingerprint.identify("Server: Synology/DSM; DS218play")
+        assertNotNull(m)
+        assertEquals("NAS", m!!.type)
+        assertTrue(m.product.contains("Synology"))
+    }
+
+    @Test
+    fun fingerprint_identifiesNginx() {
+        val m = ServiceFingerprint.identify("Server: nginx/1.18.0")
+        assertNotNull(m)
+        assertTrue(m!!.product.contains("nginx"))
+    }
+
+    @Test
+    fun fingerprint_identifiesFreebox() {
+        val m = ServiceFingerprint.identify("Freebox OS 4.2")
+        assertNotNull(m)
+        assertEquals("Routeur / Box", m!!.type)
+    }
+
+    @Test
+    fun fingerprint_blankReturnsNull() {
+        assertNull(ServiceFingerprint.identify(""))
+        assertNull(ServiceFingerprint.identify("   "))
+    }
+
     @Test
     fun scanPersistence_roundTrip() {
         // Sérialisation JSON : save → load restitue les appareils (test sur
