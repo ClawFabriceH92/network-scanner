@@ -1,4 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.NetworkScanner" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- Thème de lancement : transparent, sans barre d'action (Compose dessine
+         tout). Les barres système sont transparentes ; l'edge-to-edge est géré
+         au runtime via enableEdgeToEdge() (targetSdk 35). Variante nuit dans
+         values-night/themes.xml. -->
+    <style name="Theme.NetworkScanner" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
 </resources>

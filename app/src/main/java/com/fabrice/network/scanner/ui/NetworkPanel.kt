@@ -18,7 +18,6 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -28,13 +27,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.fabrice.network.scanner.SpeedTest
 import com.fabrice.network.scanner.WifiQuality
+import com.fabrice.network.scanner.ui.theme.LocalMonoTextStyle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -80,22 +78,21 @@ fun NetworkPanel() {
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 4.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
     ) {
-        Column(Modifier.padding(12.dp)) {
+        Column(Modifier.padding(16.dp)) {
             // --- Qualité Wi-Fi ---
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "📶 Qualité Wi-Fi",
+                    "Qualité Wi-Fi",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )
                 Spacer(Modifier.weight(1f))
                 Text(
                     WifiQuality.formatRssi(rssi),
-                    style = MaterialTheme.typography.labelMedium,
-                    fontFamily = FontFamily.Monospace,
+                    style = LocalMonoTextStyle.current,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -116,7 +113,7 @@ fun NetworkPanel() {
             // --- Test de vitesse ---
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "🚀 Test réseau",
+                    "Test réseau",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )
@@ -140,9 +137,9 @@ fun NetworkPanel() {
             result?.let { r ->
                 Spacer(Modifier.height(8.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    MetricBox("⬇️ Télécharger", "${SpeedTest.formatMbps(r.downloadMbps)} Mbps", Color(0xFF2E7D32))
-                    MetricBox("⬆️ Charger", "${SpeedTest.formatMbps(r.uploadMbps)} Mbps", Color(0xFF1B3A6B))
-                    MetricBox("⏱️ Latence", "${r.latencyMs} ms", Color(0xFFC62828))
+                    MetricBox("Télécharger", "${SpeedTest.formatMbps(r.downloadMbps)} Mbps")
+                    MetricBox("Charger", "${SpeedTest.formatMbps(r.uploadMbps)} Mbps")
+                    MetricBox("Latence", "${r.latencyMs} ms")
                 }
             }
         }
@@ -164,7 +161,8 @@ private fun WifiBars(level: Int) {
                     .width(8.dp)
                     .height(h)
                     .background(
-                        if (on) Color(0xFF2E7D32) else Color(0xFFE0E0E0),
+                        if (on) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.surfaceVariant,
                         RoundedCornerShape(2.dp)
                     )
             )
@@ -173,24 +171,24 @@ private fun WifiBars(level: Int) {
 }
 
 @Composable
-private fun RowScope.MetricBox(label: String, value: String, color: Color) {
+private fun RowScope.MetricBox(label: String, value: String) {
     Column(
         modifier = Modifier
             .weight(1f)
-            .background(color, RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(8.dp))
             .padding(vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
             label,
             style = MaterialTheme.typography.labelSmall,
-            color = Color.White.copy(alpha = 0.85f)
+            color = MaterialTheme.colorScheme.onPrimaryContainer
         )
         Spacer(Modifier.height(2.dp))
         Text(
             value,
             style = MaterialTheme.typography.bodyMedium,
-            color = Color.White,
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
             fontWeight = FontWeight.Bold
         )
     }

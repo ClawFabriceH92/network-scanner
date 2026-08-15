@@ -1,7 +1,6 @@
 package com.fabrice.network.scanner.ui
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -31,11 +29,11 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.fabrice.network.scanner.NetworkInfoProvider
 import com.fabrice.network.scanner.WifiQuality
+import com.fabrice.network.scanner.ui.theme.LocalMonoTextStyle
 import kotlinx.coroutines.delay
 
 /**
@@ -89,22 +87,22 @@ fun NetworkScreen() {
         // --- Infos réseau ---
         Card(
             modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = Color.White),
-            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            shape = MaterialTheme.shapes.large,
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
         ) {
-            Column(Modifier.padding(12.dp)) {
+            Column(Modifier.padding(16.dp)) {
                 Text(
-                    "🌐 Réseau Wi-Fi",
+                    "Réseau Wi-Fi",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )
                 Spacer(Modifier.height(8.dp))
                 InfoRow("SSID", info.ssid.ifBlank { "inconnu" })
-                InfoRow("BSSID", info.bssid.ifBlank { "non disponible" })
-                InfoRow("Réseau", info.networkAddress.ifBlank { "—" } + if (info.mask.isNotBlank()) " / ${info.mask}" else "")
-                InfoRow("Passerelle", info.gateway.ifBlank { "inconnue" })
-                InfoRow("IP publique", publicIp ?: "…")
-                InfoRow("DNS", info.dns.joinToString(", ").ifBlank { "inconnu" })
+                InfoRow("BSSID", info.bssid.ifBlank { "non disponible" }, mono = true)
+                InfoRow("Réseau", info.networkAddress.ifBlank { "—" } + if (info.mask.isNotBlank()) " / ${info.mask}" else "", mono = true)
+                InfoRow("Passerelle", info.gateway.ifBlank { "inconnue" }, mono = true)
+                InfoRow("IP publique", publicIp ?: "…", mono = true)
+                InfoRow("DNS", info.dns.joinToString(", ").ifBlank { "inconnu" }, mono = true)
                 InfoRow("Bande", info.band.ifBlank { "—" })
                 InfoRow("Débit liaison", if (info.linkSpeedMbps > 0) "${info.linkSpeedMbps} Mbps" else "—")
                 InfoRow("Signal", "${WifiQuality.formatRssi(rssi)} · ${WifiQuality.label(rssi)}")
@@ -116,27 +114,26 @@ fun NetworkScreen() {
         // --- Graphe RSSI ---
         Card(
             modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = Color.White),
-            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            shape = MaterialTheme.shapes.large,
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
         ) {
-            Column(Modifier.padding(12.dp)) {
+            Column(Modifier.padding(16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "📈 Signal dans le temps",
+                        "Signal dans le temps",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(Modifier.weight(1f))
                     Text(
                         WifiQuality.formatRssi(rssi),
-                        style = MaterialTheme.typography.labelMedium,
-                        fontFamily = FontFamily.Monospace,
+                        style = LocalMonoTextStyle.current,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Promène-toi : la courbe monte quand le signal s'améliore.",
+                    "Promène-toi : la courbe monte quand le signal s'améliore (échelle −40 à −100 dBm).",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -158,12 +155,16 @@ fun NetworkScreen() {
 /** Courbe du RSSI (dBm) sur la fenêtre glissante. */
 @Composable
 private fun RssiGraph(history: List<Pair<Long, Int>>, modifier: Modifier = Modifier) {
+    val gridColor = MaterialTheme.colorScheme.outlineVariant
+    val idleColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val curveColor = MaterialTheme.colorScheme.primary
+    val fillColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+    val dotColor = MaterialTheme.colorScheme.tertiary
     Canvas(modifier = modifier) {
         val w = size.width
         val h = size.height
 
         // Fond quadrillé (palier -50 / -70 / -90)
-        val gridColor = Color(0xFFE0E0E0)
         listOf(-50, -70, -90).forEach { level ->
             val y = ((level - -100f) / (-40f)) * h
             drawLine(gridColor, Offset(0f, y), Offset(w, y), strokeWidth = 1f)
@@ -171,7 +172,7 @@ private fun RssiGraph(history: List<Pair<Long, Int>>, modifier: Modifier = Modif
 
         if (history.size < 2) {
             drawLine(
-                Color(0xFFBDBDBD),
+                idleColor,
                 Offset(w * 0.1f, h / 2),
                 Offset(w * 0.9f, h / 2),
                 strokeWidth = 2f,
@@ -201,15 +202,15 @@ private fun RssiGraph(history: List<Pair<Long, Int>>, modifier: Modifier = Modif
             lineTo(0f, h)
             close()
         }
-        drawPath(fillPath, Color(0x1F2E7D32))
+        drawPath(fillPath, fillColor)
 
         // Courbe
-        drawPath(path, Color(0xFF2E7D32), style = Stroke(width = 2.5f, cap = StrokeCap.Round))
+        drawPath(path, curveColor, style = Stroke(width = 2.5f, cap = StrokeCap.Round))
 
         // Dernier point (position actuelle)
         val last = history.last()
         drawCircle(
-            Color(0xFFC9972B),
+            dotColor,
             radius = 5f,
             center = Offset((last.first / maxT) * w, yOf(last.second))
         )
@@ -217,7 +218,7 @@ private fun RssiGraph(history: List<Pair<Long, Int>>, modifier: Modifier = Modif
 }
 
 @Composable
-private fun InfoRow(label: String, value: String) {
+private fun InfoRow(label: String, value: String, mono: Boolean = false) {
     Row(Modifier.padding(vertical = 3.dp)) {
         Text(
             "$label :",
@@ -225,6 +226,10 @@ private fun InfoRow(label: String, value: String) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(end = 8.dp)
         )
-        Text(value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+        Text(
+            value,
+            style = if (mono) LocalMonoTextStyle.current else MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium
+        )
     }
 }

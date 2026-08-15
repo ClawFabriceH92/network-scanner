@@ -18,13 +18,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.fabrice.network.scanner.BuildConfig
 import com.fabrice.network.scanner.CveDatabaseStore
 import com.fabrice.network.scanner.CveUpdateManager
+import com.fabrice.network.scanner.ui.theme.LocalMonoTextStyle
 
 /** Écran d'aide : explication du scan, du score, des limites. */
 @Composable
@@ -36,7 +36,7 @@ fun HelpScreen() {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("🛡️ Comprendre le scan", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text("Comprendre le scan", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         HelpCard("Comment ça marche ?") {
             "L'app scanne le réseau Wi-Fi local : ping parallèle pour détecter les " +
                 "appareils en ligne, lecture de la table ARP pour les appareils silencieux, " +
@@ -64,7 +64,7 @@ fun HelpScreen() {
         HelpCard("Base de vulnérabilités") {
             "Les CVE viennent de NVD (NIST) et du catalogue KEV (CISA) — les mêmes sources " +
                 "que CERT-FR. La base est embarquée dans l'app et peut être mise à jour en " +
-                "un tap (bouton 🔄). Si elle date de plus de 30 jours, un avertissement " +
+                "un tap. Si elle date de plus de 30 jours, un avertissement " +
                 "s'affiche : une base obsolète rate les nouvelles failles."
         }
         HelpCard("Que faire si un score est élevé ?") {
@@ -84,7 +84,7 @@ fun HelpScreen() {
 /** Écran À propos : version, sources, RGPD, changelog. */
 @Composable
 fun AboutScreen() {
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     val dbVersion = CveDatabaseStore.version(context) ?: "inconnue"
     val dbAge = CveUpdateManager.ageDays(dbVersion)
     val ageLabel = when {
@@ -101,7 +101,7 @@ fun AboutScreen() {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("ℹ️ À propos", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text("À propos", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         InfoCard("Version", BuildConfig.VERSION_NAME)
         InfoCard("Base CVE", "$dbVersion ($ageLabel)")
         Spacer(Modifier.height(4.dp))
@@ -145,10 +145,10 @@ fun AboutScreen() {
 private fun HelpCard(title: String, body: () -> String) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
     ) {
-        Column(Modifier.padding(12.dp)) {
+        Column(Modifier.padding(16.dp)) {
             Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))
             Text(body(), style = MaterialTheme.typography.bodySmall)
@@ -160,9 +160,10 @@ private fun HelpCard(title: String, body: () -> String) {
 private fun InfoCard(label: String, value: String) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFF4EDE0))
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
     ) {
-        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 "$label :",
                 style = MaterialTheme.typography.labelMedium,
@@ -171,8 +172,7 @@ private fun InfoCard(label: String, value: String) {
             )
             Text(
                 value,
-                style = MaterialTheme.typography.bodyMedium,
-                fontFamily = FontFamily.Monospace,
+                style = LocalMonoTextStyle.current,
                 fontWeight = FontWeight.Bold
             )
         }
