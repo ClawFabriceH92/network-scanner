@@ -159,6 +159,21 @@ private fun BtDeviceCard(device: BluetoothScanner.BtDevice) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                if (device.services.isNotBlank()) {
+                    Text(
+                        text = "🛠 ${device.services}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1
+                    )
+                }
+                if (device.txPower.isNotBlank()) {
+                    Text(
+                        text = "📡 TX ${device.txPower}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(

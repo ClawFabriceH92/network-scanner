@@ -7,8 +7,8 @@
     <!-- WoL : envoyer le magic packet en broadcast nécessite le multicast lock -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <!-- Bluetooth : scan des périphériques à proximité (Android 12+ : runtime) -->
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
-        android:usesPermissionFlags="neverForLocation" />
+    <!-- ⚠️ PAS de neverForLocation : ce flag fait filtrer les appareils BLE par le système -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-feature android:name="android.hardware.bluetooth" android:required="false" />

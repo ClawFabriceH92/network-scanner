@@ -227,7 +227,7 @@ fun ScannerScreen() {
                 btError = null
                 val oui = OuiDatabase.load(ctx)
                 btDevices = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    BluetoothScanner.scan(ctx, durationMs = 8_000, oui = oui)
+                    BluetoothScanner.scan(ctx, durationMs = 12_000, oui = oui)
                 }
                 btScanning = false
             }

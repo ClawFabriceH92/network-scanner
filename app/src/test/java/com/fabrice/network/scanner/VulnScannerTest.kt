@@ -262,4 +262,21 @@ class VulnScannerTest {
         val result = SmbShareScanner.scanShares("192.0.2.254", timeoutMs = 800)
         assertTrue(result.isEmpty())
     }
+
+    // ---------- BluetoothScanner (logique pure) ----------
+
+    @Test
+    fun bt_vendorForUsesOui() {
+        val oui = mapOf("aabbcc" to "TestVendor")
+        assertEquals("TestVendor", BluetoothScanner.vendorFor("AA:BB:CC:11:22:33", oui))
+        assertEquals("", BluetoothScanner.vendorFor("AA:BB:CC:11:22:33", emptyMap()))
+    }
+
+    @Test
+    fun bt_shortServiceName_knownAndUnknown() {
+        // Les noms de services sont déduits des UUID courts (logique pure)
+        // 180F = Battery Service
+        val battery = BluetoothScanner.shortServiceName("0000180f-0000-1000-8000-00805f9b34fb")
+        assertTrue(battery.isNotEmpty())
+    }
 }
