@@ -73,6 +73,11 @@ fun NetworkScreen() {
     ) {
         Spacer(Modifier.height(4.dp))
 
+        // --- Qualité Wi-Fi + test réseau (déplacé depuis l'onglet Périphériques) ---
+        NetworkPanel()
+
+        Spacer(Modifier.height(8.dp))
+
         // --- Infos réseau ---
         Card(
             modifier = Modifier.fillMaxWidth(),

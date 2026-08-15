@@ -363,7 +363,9 @@ fun ScannerScreen() {
             }
         },
         floatingActionButton = {
-            if (screen == 0 && selectedTab == 0) {
+            // FAB visible seulement avec des appareils — l'état vide a son
+            // propre bouton central (un seul bouton Scanner à l'écran)
+            if (screen == 0 && selectedTab == 0 && devices.isNotEmpty()) {
                 ExtendedFloatingActionButton(
                     onClick = { if (!scanning) runScan() },
                     containerColor = MaterialTheme.colorScheme.primary,
@@ -420,7 +422,6 @@ fun ScannerScreen() {
                         if (newDevices.isNotEmpty()) {
                             NewDevicesBanner(newDevices)
                         }
-                        NetworkPanel()
                         // Bandeau base CVE : obsolète ou mise à jour proposée
                         if (!cveUpdating && (cveStale || cveUpdateResult != null)) {
                             CveBanner(
