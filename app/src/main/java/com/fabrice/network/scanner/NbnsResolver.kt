@@ -188,4 +188,46 @@ object NbnsResolver {
             null
         }
     }
+
+    /**
+     * Découverte NetBIOS par BROADCAST — la technique qui trouve les PC Windows
+     * dont on ne connaît pas encore l'IP (ping filtré, pas de mDNS/WSD, ARP vide
+     * sur Android 10+). Envoie UNE requête NBSTAT vers l'adresse broadcast du
+     * sous-réseau (ex. 192.168.0.255:137) ; chaque machine NetBIOS active répond
+     * depuis son IP source avec son nom (+ MAC de l'adaptateur).
+     *
+     * @return nom/MAC par IP source. Jamais d'exception (map vide en échec).
+     */
+    fun discover(broadcastIp: String, timeoutMs: Int = 1_200): Map<String, NbnsInfo> {
+        if (broadcastIp.isBlank()) return emptyMap()
+        val perIp = HashMap<String, NbnsInfo>()
+        try {
+            DatagramSocket().use { socket ->
+                socket.soTimeout = 250
+                val req = buildNbstatQuery()
+                socket.send(
+                    DatagramPacket(req, req.size, InetAddress.getByName(broadcastIp), PORT)
+                )
+                val buf = ByteArray(2048)
+                val deadline = System.currentTimeMillis() + timeoutMs
+                while (System.currentTimeMillis() < deadline) {
+                    val pkt = DatagramPacket(buf, buf.size)
+                    try {
+                        socket.receive(pkt)
+                    } catch (e: java.net.SocketTimeoutException) {
+                        continue
+                    }
+                    val ip = pkt.address?.hostAddress ?: continue
+                    val info = parseNbstatResponse(pkt.data.copyOf(pkt.length)) ?: continue
+                    // Ne pas se noter soi-même ni fusionner du vide par-dessus du connu.
+                    if (info.hasInfo && ip != broadcastIp) {
+                        perIp[ip] = info
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // broadcast refusé (certains OEM) → on rend ce qu'on a déjà.
+        }
+        return perIp
+    }
 }

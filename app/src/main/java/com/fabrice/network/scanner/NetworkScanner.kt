@@ -207,13 +207,24 @@ object NetworkScanner {
             if (!executor.isShutdown) executor.shutdownNow()
         }
 
-        // Découverte multicast (UPnP/SSDP + mDNS + WS-Discovery) en parallèle :
-        // trois salves multicast simultanées, réponses agrégées par IP source.
-        val (upnpByIp, mdnsByIp, wsdByIp) = coroutineScope {
+        // Découverte multicast (UPnP/SSDP + mDNS + WS-Discovery + NetBIOS
+        // broadcast) en parallèle : salves simultanées, réponses par IP source.
+        // Le broadcast NetBIOS trouve les PC Windows qui filtrent le ping et
+        // n'ont ni mDNS ni WSD actifs — leur IP n'était connue nulle part.
+        val broadcastIp = broadcastAddress(ip, prefix)
+        val upnpByIp: Map<String, UpnpProbe.UpnpInfo>
+        val mdnsByIp: Map<String, MdnsResolver.MdnsInfo>
+        val wsdByIp: Map<String, WsdResolver.WsdInfo>
+        val nbnsByIp: Map<String, NbnsResolver.NbnsInfo>
+        coroutineScope {
             val upnp = async(Dispatchers.IO) { UpnpProbe.discover() }
             val mdns = async(Dispatchers.IO) { MdnsResolver.discover() }
             val wsd = async(Dispatchers.IO) { WsdResolver.discover() }
-            Triple(upnp.await(), mdns.await(), wsd.await())
+            val nbns = async(Dispatchers.IO) { NbnsResolver.discover(broadcastIp) }
+            upnpByIp = upnp.await()
+            mdnsByIp = mdns.await()
+            wsdByIp = wsd.await()
+            nbnsByIp = nbns.await()
         }
 
         // Fusion ping + table ARP — TRIPLE lecture espacée : la table ARP
@@ -227,7 +238,7 @@ object NetworkScanner {
             kotlinx.coroutines.delay(700)
             readArp()
         })
-        val allIps = (alive + arp.keys + mdnsByIp.keys + wsdByIp.keys + upnpByIp.keys).toSortedSet()
+        val allIps = (alive + arp.keys + mdnsByIp.keys + wsdByIp.keys + upnpByIp.keys + nbnsByIp.keys).toSortedSet()
 
         // Cache en mémoire des fabricants résolus en ligne : évite d'interroger
         // deux fois le même préfixe OUI au cours d'un même scan.
@@ -239,18 +250,18 @@ object NetworkScanner {
             var mac = arp[host] ?: ""
             var hostname = reverseDns(host)
             // Hôte « vivant » : a répondu au ping OU à une découverte multicast
-            // (mDNS/WSD/UPnP). Un appareil qui répond en multicast est forcément
-            // en ligne — il mérite le scan de ports et le statut « En ligne ».
+            // (mDNS/WSD/UPnP) OU au broadcast NetBIOS. Un appareil qui répond
+            // est forcément en ligne — il mérite le scan de ports et le statut.
             val responded = alive.contains(host) || host in mdnsByIp ||
-                host in wsdByIp || host in upnpByIp
+                host in wsdByIp || host in upnpByIp || host in nbnsByIp
             val ports = if (scanPorts && responded) {
                 PortScanner.scanPorts(host, portsToScan)
             } else emptyList()
 
-            // NBNS (nom des machines Windows) : complète hostname + MAC si
-            // manquants, uniquement pour les hôtes vivants sans nom ou avec
-            // NetBIOS (137/139) ouvert. Jamais bloquant (runCatching).
-            val nbns = if (responded && (hostname.isBlank() || 137 in ports || 139 in ports)) {
+            // NBNS : d'abord le résultat du broadcast (déjà connu), puis une
+            // requête unicast ciblée si besoin. Complète hostname + MAC.
+            val broadcastNbns = nbnsByIp[host]
+            val nbns = broadcastNbns ?: if (responded && (hostname.isBlank() || 137 in ports || 139 in ports)) {
                 runCatching { NbnsResolver.query(host) }.getOrNull()
             } else null
             if (nbns != null) {
