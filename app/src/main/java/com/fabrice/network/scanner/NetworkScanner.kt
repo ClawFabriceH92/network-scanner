@@ -138,17 +138,19 @@ object NetworkScanner {
 
     /**
      * Scan complet du réseau local. Ping parallèle (64 threads), puis fusion
-     * avec l'ARP (double lecture), reverse DNS, lookup fabricant et scan de
+     * avec l'ARP (triple lecture), reverse DNS, lookup fabricant et scan de
      * ports pour les appareils en ligne.
      *
      * @param prefs SharedPreferences facultatif servant de cache persistant pour
      *   le lookup fabricant en ligne (clé « vendor_cache_<prefixe6> »). Passé
      *   par la couche UI ; null en test ou hors contexte Android.
+     * @param portsToScan Liste des ports à tester (défaut : PortScanner.COMMON_PORTS).
      */
     suspend fun scan(
         oui: Map<String, String>,
         scanPorts: Boolean = true,
         prefs: SharedPreferences? = null,
+        portsToScan: List<Int> = PortScanner.COMMON_PORTS.map { it.first },
         onProgress: (done: Int, total: Int) -> Unit
     ): List<Device> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         val subnet = detectSubnet() ?: return@withContext emptyList()
@@ -209,7 +211,9 @@ object NetworkScanner {
                 vendor = VendorLookup.lookup(mac, vendorCache, prefs) ?: ""
             }
             val hostname = reverseDns(host)
-            val ports = if (scanPorts && alive.contains(host)) PortScanner.scanPorts(host) else emptyList()
+            val ports = if (scanPorts && alive.contains(host)) {
+                PortScanner.scanPorts(host, portsToScan)
+            } else emptyList()
             // Banner grab : interroge les services ouverts (HTTP/SSH/FTP/SMTP…)
             // pour préciser l'OS réel et enrichir la fiche appareil.
             val banner = if (alive.contains(host)) grabService(host, ports) else ""

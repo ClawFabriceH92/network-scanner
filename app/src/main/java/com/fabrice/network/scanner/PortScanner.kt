@@ -9,9 +9,12 @@ import java.util.concurrent.TimeUnit
 /**
  * Scan de ports TCP (découverte de services).
  *
- * Stratégie : test de connexion TCP (connect timeout court) sur une liste de
- * ports connus. Les ports ouverts indiquent le type de service (SSH, HTTP,
- * RDP…). Chaque appareil est scanné en parallèle, chaque port aussi.
+ * Deux modes :
+ * - STANDARD : 16 ports les plus courants (rapide, ~1-2 s/appareil)
+ * - ÉLARGI   : ~60 ports courants + gestion/médias/IoT (plus lent mais
+ *   découvre les services rarement sur les ports standard)
+ *
+ * Chaque appareil est scanné en parallèle, chaque port aussi.
  */
 object PortScanner {
 
@@ -35,8 +38,52 @@ object PortScanner {
         11434 to "Ollama"
     )
 
+    /** Ports supplémentaires du mode élargi (gestion, mail, médias, IoT). */
+    val EXTRA_PORTS = listOf(
+        20 to "FTP-data",
+        69 to "TFTP",
+        110 to "POP3",
+        111 to "RPC",
+        135 to "MS-RPC",
+        137 to "NetBIOS",
+        138 to "NetBIOS-DGM",
+        139 to "NetBIOS-SSN",
+        143 to "IMAP",
+        161 to "SNMP",
+        162 to "SNMP-trap",
+        179 to "BGP",
+        389 to "LDAP",
+        4433 to "HTTPS-alt2",
+        5000 to "UPnP/Alt",
+        5001 to "NAS-Alt",
+        5060 to "SIP",
+        515 to "LPD",
+        5353 to "mDNS",
+        548 to "AFP",
+        636 to "LDAPS",
+        873 to "rsync",
+        8888 to "HTTP-alt3",
+        9000 to "App",
+        9090 to "Admin",
+        9100 to "Printer",
+        9200 to "Elastic",
+        9418 to "Git",
+        9999 to "App-alt",
+        10000 to "Webmin",
+        11211 to "Memcached",
+        12345 to "Remote",
+        20000 to "App",
+        27017 to "MongoDB",
+        32400 to "Plex",
+        49152 to "UPnP-Alt",
+        22_222 to "Synology"
+    )
+
+    /** Tous les ports connus (standard + élargi). */
+    val ALL_PORTS: List<Pair<Int, String>> = COMMON_PORTS + EXTRA_PORTS
+
     fun serviceName(port: Int): String =
-        COMMON_PORTS.firstOrNull { it.first == port }?.second ?: "port-$port"
+        ALL_PORTS.firstOrNull { it.first == port }?.second ?: "port-$port"
 
     /** Teste si un port TCP est ouvert sur une IP. */
     fun isPortOpen(ip: String, port: Int, timeoutMs: Int = 400): Boolean {
@@ -51,14 +98,19 @@ object PortScanner {
     }
 
     /**
-     * Scanne tous les ports connus sur une IP. Retourne la liste des ports ouverts.
+     * Scanne les ports donnés sur une IP. Retourne la liste des ports ouverts.
      * Parallélisé (un thread par port), timeout global.
      */
-    fun scanPorts(ip: String, timeoutMs: Int = 400): List<Int> {
+    fun scanPorts(
+        ip: String,
+        ports: List<Int> = COMMON_PORTS.map { it.first },
+        timeoutMs: Int = 400
+    ): List<Int> {
+        if (ports.isEmpty()) return emptyList()
         val open = ConcurrentHashMap.newKeySet<Int>()
-        val executor = Executors.newFixedThreadPool(COMMON_PORTS.size)
+        val executor = Executors.newFixedThreadPool(ports.size.coerceAtMost(64))
         try {
-            COMMON_PORTS.forEach { (port, _) ->
+            ports.forEach { port ->
                 executor.execute {
                     if (isPortOpen(ip, port, timeoutMs)) open.add(port)
                 }

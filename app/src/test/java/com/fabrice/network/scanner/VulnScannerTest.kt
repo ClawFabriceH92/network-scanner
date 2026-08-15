@@ -279,4 +279,78 @@ class VulnScannerTest {
         val battery = BluetoothScanner.shortServiceName("0000180f-0000-1000-8000-00805f9b34fb")
         assertTrue(battery.isNotEmpty())
     }
+
+    // ---------- PortScanner élargi ----------
+
+    @Test
+    fun ports_extendedListHasMoreThanStandard() {
+        assertTrue(PortScanner.ALL_PORTS.size > PortScanner.COMMON_PORTS.size)
+        // Les ports standard sont inclus dans l'élargi
+        PortScanner.COMMON_PORTS.forEach { (port, _) ->
+            assertTrue(PortScanner.ALL_PORTS.any { it.first == port })
+        }
+        // Pas de doublon de port
+        assertEquals(PortScanner.ALL_PORTS.size, PortScanner.ALL_PORTS.map { it.first }.toSet().size)
+    }
+
+    @Test
+    fun ports_serviceNameKnown() {
+        assertEquals("SSH", PortScanner.serviceName(22))
+        assertEquals("MongoDB", PortScanner.serviceName(27017))
+        assertEquals("Plex", PortScanner.serviceName(32400))
+        assertEquals("port-12346", PortScanner.serviceName(12346))
+    }
+
+    // ---------- PdfAuditReport (agrégation pure) ----------
+
+    @Test
+    fun audit_globalScore_cleanNetwork() {
+        val data = PdfAuditReport.buildData(
+            devices = listOf(Device(ip = "192.168.0.1")),
+            vulnsByIp = emptyMap(),
+            selfIp = "192.168.0.5",
+            networkCidr = "192.168.0.0/24"
+        )
+        assertEquals(100, data.globalScore)
+        assertEquals("Aucune", data.riskLabel)
+    }
+
+    @Test
+    fun audit_globalScore_penalizesCritical() {
+        val vulns = VulnScanner.DeviceVulns(
+            services = emptyList(),
+            cves = listOf(
+                CveEntry("CVE-X", "nginx", "CRITICAL", 9.8, "desc", kev = true, ransomware = false, ranges = emptyList())
+            ),
+            score = 60, label = "Élevé", criticalCount = 1, highCount = 0, kevCount = 1
+        )
+        val data = PdfAuditReport.buildData(
+            devices = listOf(Device(ip = "192.168.0.1")),
+            vulnsByIp = mapOf("192.168.0.1" to vulns),
+            selfIp = "192.168.0.5",
+            networkCidr = ""
+        )
+        // 100 - 15 (critique) - 5 (KEV) = 80
+        assertEquals(80, data.globalScore)
+        assertEquals(1, data.criticalVulns)
+        assertEquals(1, data.kevVulns)
+    }
+
+    @Test
+    fun audit_globalScore_neverBelowZero() {
+        val vulns = VulnScanner.DeviceVulns(
+            services = emptyList(),
+            cves = List(10) { i ->
+                CveEntry("CVE-$i", "nginx", "CRITICAL", 9.8, "desc", kev = true, ransomware = false, ranges = emptyList())
+            },
+            score = 100, label = "Critique", criticalCount = 10, highCount = 0, kevCount = 10
+        )
+        val data = PdfAuditReport.buildData(
+            devices = listOf(Device(ip = "192.168.0.1")),
+            vulnsByIp = mapOf("192.168.0.1" to vulns),
+            selfIp = "",
+            networkCidr = ""
+        )
+        assertEquals(0, data.globalScore)
+    }
 }

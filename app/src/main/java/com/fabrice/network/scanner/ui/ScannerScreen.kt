@@ -69,6 +69,7 @@ import com.fabrice.network.scanner.DeviceType
 import com.fabrice.network.scanner.HistoryStore
 import com.fabrice.network.scanner.NetworkScanner
 import com.fabrice.network.scanner.OuiDatabase
+import com.fabrice.network.scanner.PdfAuditReport
 import com.fabrice.network.scanner.PortScanner
 import com.fabrice.network.scanner.ScanHistory
 import com.fabrice.network.scanner.SmbShareScanner
@@ -111,6 +112,13 @@ fun ScannerScreen() {
     var cveDbVersion by remember { mutableStateOf<String?>(null) }
     // Écran : 0 = scan, 1 = aide, 2 = à propos
     var screen by remember { mutableStateOf(0) }
+    // Mode de scan de ports : 0 = standard (16), 1 = élargi (52) — persisté
+    var portMode by remember {
+        mutableStateOf(
+            context.getSharedPreferences("scan_prefs", Context.MODE_PRIVATE)
+                .getInt("port_mode", 0)
+        )
+    }
     // État de la mise à jour de la base CVE
     var cveUpdating by remember { mutableStateOf(false) }
     var cveUpdateResult by remember { mutableStateOf<String?>(null) }
@@ -140,8 +148,15 @@ fun ScannerScreen() {
             val vendorPrefs = context.getSharedPreferences("vendor_cache", Context.MODE_PRIVATE)
             val result = try {
                 // Le multicast lock est requis pour le SSDP (239.255.255.250)
+                val portsToScan = if (portMode == 1) PortScanner.ALL_PORTS.map { it.first }
+                else PortScanner.COMMON_PORTS.map { it.first }
                 withMulticastLock(context) {
-                    NetworkScanner.scan(oui, scanPorts = true, prefs = vendorPrefs) { done, total -> progress = done }
+                    NetworkScanner.scan(
+                        oui,
+                        scanPorts = true,
+                        prefs = vendorPrefs,
+                        portsToScan = portsToScan
+                    ) { done, total -> progress = done }
                 }
             } catch (e: Exception) {
                 error = e.message ?: "Erreur inconnue"
@@ -250,6 +265,13 @@ fun ScannerScreen() {
                     if (screen != 0) {
                         TextButton(onClick = { screen = 0 }) { Text("← Retour") }
                     } else {
+                        if (devices.isNotEmpty() && !scanning) {
+                            TextButton(onClick = {
+                                exportPdf(context, devices, vulnsByIp, selfIp)
+                            }) {
+                                Text("📄 Rapport")
+                            }
+                        }
                         if (devices.isNotEmpty() && !scanning) {
                             TextButton(onClick = { exportCsv(context, devices, vulnsByIp) }) {
                                 Text("📤 Export")
@@ -384,6 +406,15 @@ fun ScannerScreen() {
                         )
                     }
                 }
+                // Mode de scan de ports (standard / élargi)
+                PortModeSelector(
+                    mode = portMode,
+                    onChange = { newMode ->
+                        portMode = newMode
+                        context.getSharedPreferences("scan_prefs", Context.MODE_PRIVATE)
+                            .edit().putInt("port_mode", newMode).apply()
+                    }
+                )
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
@@ -459,6 +490,46 @@ private fun NewDevicesBanner(newDevices: List<Device>) {
                     style = MaterialTheme.typography.bodySmall
                 )
             }
+        }
+    }
+}
+
+/** Sélecteur de mode de scan de ports (standard / élargi). */
+@Composable
+private fun PortModeSelector(mode: Int, onChange: (Int) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            "Ports :",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        TextButton(
+            onClick = { onChange(0) },
+            enabled = mode != 0
+        ) {
+            Text(
+                "Standard (16)",
+                color = if (mode == 0) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = if (mode == 0) FontWeight.Bold else FontWeight.Normal
+            )
+        }
+        TextButton(
+            onClick = { onChange(1) },
+            enabled = mode != 1
+        ) {
+            Text(
+                "Élargi (${PortScanner.ALL_PORTS.size})",
+                color = if (mode == 1) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = if (mode == 1) FontWeight.Bold else FontWeight.Normal
+            )
         }
     }
 }
@@ -970,6 +1041,30 @@ private fun exportCsv(
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     context.startActivity(Intent.createChooser(intent, "Exporter le scan"))
+}
+
+/** Génère le rapport d'audit PDF et ouvre le partage. */
+private fun exportPdf(
+    context: Context,
+    devices: List<Device>,
+    vulnsByIp: Map<String, VulnScanner.DeviceVulns>,
+    selfIp: String?
+) {
+    val subnet = NetworkScanner.detectSubnet()
+    val cidr = if (subnet != null) "${subnet.first}/${subnet.second}" else ""
+    val data = PdfAuditReport.buildData(
+        devices = devices,
+        vulnsByIp = vulnsByIp,
+        selfIp = selfIp ?: "—",
+        networkCidr = cidr
+    )
+    val uri = PdfAuditReport.generateAndShareUri(context, data)
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "application/pdf"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(intent, "Partager le rapport d'audit"))
 }
 
 /** Acquiert le multicast lock le temps de l'exécution (requis pour broadcast/SSDP). */
