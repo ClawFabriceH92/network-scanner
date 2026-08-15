@@ -725,6 +725,8 @@ private fun DeviceCard(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+                // Type d'appareil explicite (imprimante, PC, NAS…)
+                TypeBadge(device.type)
                 Text(
                     text = if (device.vendor.isNotBlank()) device.vendor
                     else if (device.os.isNotBlank()) "💻 ${device.os}"
@@ -851,6 +853,35 @@ private fun PortBadge(port: Int) {
             color = Color.White
         )
     }
+}
+
+/** Badge du type d'appareil (imprimante, PC, NAS…) — explicite, coloré. */
+@Composable
+private fun TypeBadge(type: String) {
+    val color = when (type) {
+        "Imprimante" -> Color(0xFF1565C0)
+        "Ordinateur" -> Color(0xFF2E7D32)
+        "Smartphone" -> Color(0xFF6A1B9A)
+        "NAS" -> Color(0xFFE65100)
+        "Routeur / Box" -> Color(0xFF00838F)
+        "Caméra" -> Color(0xFFC62828)
+        "TV / Media" -> Color(0xFF283593)
+        "IoT" -> Color(0xFF5D4037)
+        else -> Color(0xFF757575)
+    }
+    Box(
+        modifier = Modifier
+            .background(color, RoundedCornerShape(4.dp))
+            .padding(horizontal = 5.dp, vertical = 1.dp)
+    ) {
+        Text(
+            "${DeviceType.icon(type)} $type",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White,
+            fontWeight = FontWeight.Bold
+        )
+    }
+    Spacer(Modifier.height(2.dp))
 }
 
 /**

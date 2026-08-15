@@ -26,10 +26,14 @@ object DeviceType {
         "Imprimante" -> "🖨️"
         "Ordinateur" -> "🖥️"
         "Smartphone" -> "📱"
+        "Tablette" -> "📱"
         "NAS" -> "💾"
         "Routeur / Box" -> "📶"
         "Caméra" -> "📷"
         "TV / Media" -> "📺"
+        "Console" -> "🎮"
+        "Montre" -> "⌚"
+        "Enceinte" -> "🔊"
         "IoT" -> "💡"
         else -> "❓"
     }
@@ -42,16 +46,26 @@ object DeviceType {
                 h.startsWith("npi") -> "Imprimante"
             h.contains("synology") || h.contains("qnap") || h.contains("nas") ||
                 h.contains("ds2") || h.contains("ds7") || h.contains("diskstation") -> "NAS"
-            h.contains("iphone") || h.contains("ipad") || h.contains("android") ||
-                h.contains("xiaomi") || h.contains("galaxy") || h.contains("samsung") -> "Smartphone"
+            h.contains("ipad") || h.contains("tablet") || h.contains("tab") -> "Tablette"
+            h.contains("watch") || h.contains("montre") || h.contains("fitbit") ||
+                h.contains("garmin") -> "Montre"
+            h.contains("speaker") || h.contains("enceinte") || h.contains("sonos") ||
+                h.contains("echo") || h.contains("homepod") || h.contains("alexa") -> "Enceinte"
+            h.contains("ps4") || h.contains("ps5") || h.contains("playstation") ||
+                h.contains("xbox") || h.contains("nintendo") || h.contains("switch") ||
+                h.contains("wii") -> "Console"
+            h.contains("iphone") || h.contains("android") ||
+                h.contains("xiaomi") || h.contains("galaxy") || h.contains("samsung") ||
+                h.contains("pixel") || h.contains("oneplus") || h.contains("oppo") -> "Smartphone"
             h.contains("cam") || h.contains("camera") || h.contains("webcam") ||
                 h.contains("hikvision") || h.contains("reolink") -> "Caméra"
             h.contains("tv") || h.contains("bravia") || h.contains("television") ||
-                h.contains("chromecast") || h.contains("roku") -> "TV / Media"
+                h.contains("chromecast") || h.contains("roku") || h.contains("firestick") -> "TV / Media"
             h.contains("freebox") || h.contains("livebox") || h.contains("box") ||
                 h.contains("routeur") || h.contains("router") || h.contains("b-box") -> "Routeur / Box"
             h.contains("esp32") || h.contains("esp_") || h.contains("shelly") ||
-                h.contains("tuya") || h.contains("tasmota") || h.contains("wemos") -> "IoT"
+                h.contains("tuya") || h.contains("tasmota") || h.contains("wemos") ||
+                h.contains("sonoff") -> "IoT"
             h.startsWith("desktop-") || h.contains("windows") || h.contains("linux") ||
                 h.contains("raspberry") || h.contains("ubuntu") -> "Ordinateur"
             else -> null
@@ -90,13 +104,13 @@ object DeviceType {
             v.contains("xiaomi") || v.contains("huawei") || v.contains("samsung") ||
                 v.contains("apple") || v.contains("sony") || v.contains("oneplus") ||
                 v.contains("oppo") || v.contains("google") -> "Smartphone"
-            v.contains("lg electronics") || v.contains("samsung") || v.contains("tcl") ->
-                "TV / Media"
+            v.contains("lg electronics") || v.contains("tcl") ||
+                v.contains("vestel") -> "TV / Media"
             v.contains("espressif") || v.contains("texas instruments") ||
                 v.contains("silicon labs") -> "IoT"
             v.contains("dell") || v.contains("lenovo") || v.contains("acer") ||
                 v.contains("msi") || v.contains("gigabyte") || v.contains("intel") ||
-                v.contains("amd") || v.contains("gsd") || v.contains("gigabyte") -> "Ordinateur"
+                v.contains("amd") || v.contains("gsd") -> "Ordinateur"
             else -> null
         }
     }

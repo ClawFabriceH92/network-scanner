@@ -316,6 +316,33 @@ class FingFeaturesTest {
     }
 
     @Test
+    fun deviceType_newTypes() {
+        // Tablette
+        assertEquals("Tablette", DeviceType.classify("", "ipad-de-fabrice", emptyList(), ""))
+        assertEquals("Tablette", DeviceType.classify("", "android-tablet", emptyList(), ""))
+        // Console
+        assertEquals("Console", DeviceType.classify("", "ps5", emptyList(), ""))
+        assertEquals("Console", DeviceType.classify("", "XBOX-ONE", emptyList(), ""))
+        // Montre
+        assertEquals("Montre", DeviceType.classify("", "galaxy-watch", emptyList(), ""))
+        assertEquals("Montre", DeviceType.classify("", "fitbit-1", emptyList(), ""))
+        // Enceinte
+        assertEquals("Enceinte", DeviceType.classify("", "sonos-lounge", emptyList(), ""))
+        assertEquals("Enceinte", DeviceType.classify("", "echo-dot", emptyList(), ""))
+        // TV avec firestick
+        assertEquals("TV / Media", DeviceType.classify("", "firestick-salon", emptyList(), ""))
+    }
+
+    @Test
+    fun deviceType_iconsExist() {
+        assertEquals("🖨️", DeviceType.icon("Imprimante"))
+        assertEquals("🎮", DeviceType.icon("Console"))
+        assertEquals("⌚", DeviceType.icon("Montre"))
+        assertEquals("🔊", DeviceType.icon("Enceinte"))
+        assertEquals("❓", DeviceType.icon("Inconnu"))
+    }
+
+    @Test
     fun deviceType_icons() {
         assertEquals("🖨️", DeviceType.icon("Imprimante"))
         assertEquals("📱", DeviceType.icon("Smartphone"))
