@@ -119,7 +119,7 @@ fun ScannerScreen() {
     // Vulnérabilités par IP (calculées après chaque scan, base CVE embarquée)
     var vulnsByIp by remember { mutableStateOf<Map<String, VulnScanner.DeviceVulns>>(emptyMap()) }
     var cveDbVersion by remember { mutableStateOf<String?>(null) }
-    // Écran : 0 = scan, 1 = aide, 2 = à propos
+    // Écran : 0 = scan, 1 = aide, 2 = à propos, 3 = nouveaux appareils
     var screen by remember { mutableStateOf(0) }
     // Mode de scan de ports : 0 = standard (16), 1 = élargi (52) — persisté
     var portMode by remember {
@@ -282,6 +282,7 @@ fun ScannerScreen() {
                         when (screen) {
                             1 -> "Aide"
                             2 -> "À propos"
+                            3 -> "Nouveaux appareils"
                             else -> "Scan Réseau"
                         }
                     )
@@ -396,6 +397,11 @@ fun ScannerScreen() {
                 HelpScreen()
             } else if (screen == 2) {
                 AboutScreen()
+            } else if (screen == 3) {
+                NewDevicesScreen(
+                    devices = newDevices,
+                    onDeviceClick = { selected = it }
+                )
             } else {
                 when (selectedTab) {
                     1 -> NetworkScreen()
@@ -420,7 +426,10 @@ fun ScannerScreen() {
                             }
                         }
                         if (newDevices.isNotEmpty()) {
-                            NewDevicesBanner(newDevices)
+                            NewDevicesBanner(
+                                newDevices = newDevices,
+                                onClick = { screen = 3 }
+                            )
                         }
                         // Bandeau base CVE : obsolète ou mise à jour proposée
                         if (!cveUpdating && (cveStale || cveUpdateResult != null)) {
@@ -552,27 +561,119 @@ private fun EmptyDevicesState(onScan: () -> Unit) {
 }
 
 @Composable
-private fun NewDevicesBanner(newDevices: List<Device>) {
+private fun NewDevicesBanner(newDevices: List<Device>, onClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp),
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+            .clickable(onClick = onClick),
         colors = CardDefaults.cardColors(
             containerColor = Color(0xFF1B3A6B)
         )
     ) {
-        Column(Modifier.padding(12.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Text(
-                "🆕 ${newDevices.size} nouvel${if (newDevices.size > 1) "s appareil" else " appareil"}${if (newDevices.size > 1) "s" else ""} détecté${if (newDevices.size > 1) "s" else ""}",
+                if (newDevices.size == 1) "🆕 1 nouvel appareil détecté"
+                else "🆕 ${newDevices.size} nouveaux appareils détectés",
                 color = Color(0xFFC9972B),
+                fontWeight = FontWeight.Bold,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                "Voir →",
+                color = Color.White,
+                style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold
             )
-            newDevices.take(5).forEach { d ->
-                Text(
-                    "• ${d.hostname.ifBlank { d.ip }} (${d.ip})",
-                    color = Color.White,
-                    style = MaterialTheme.typography.bodySmall
-                )
+        }
+    }
+}
+
+/** Écran plein : liste des appareils nouvellement détectés. */
+@Composable
+private fun NewDevicesScreen(
+    devices: List<Device>,
+    onDeviceClick: (Device) -> Unit
+) {
+    Column(Modifier.fillMaxSize()) {
+        Text(
+            "🆕 ${devices.size} nouveaux appareils détectés lors du dernier scan",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(16.dp)
+        )
+        if (devices.isEmpty()) {
+            Text(
+                "Aucun nouvel appareil.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(16.dp)
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(devices, key = { it.ip }) { device ->
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onDeviceClick(device) },
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .background(
+                                        Brush.linearGradient(
+                                            listOf(Color(0xFF1B3A6B), Color(0xFF2E5A9E))
+                                        ),
+                                        RoundedCornerShape(10.dp)
+                                    )
+                                    .padding(8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    DeviceType.icon(device.type),
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    device.hostname.ifBlank { device.ip },
+                                    style = MaterialTheme.typography.titleSmall,
+                                    maxLines = 1
+                                )
+                                TypeBadge(device.type)
+                                Text(
+                                    device.vendor.ifBlank { "Fabricant inconnu" },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Text(
+                                device.ip,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                    }
+                }
             }
         }
     }
