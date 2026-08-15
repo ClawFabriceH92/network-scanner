@@ -30,8 +30,17 @@ object UpnpProbe {
             get() = friendlyName.isNotBlank() || manufacturer.isNotBlank() || modelName.isNotBlank()
     }
 
+    /** Cibles SSDP interrogées en une seule salve multicast (fusionnées par IP). */
+    private val SEARCH_TARGETS = listOf(
+        "upnp:rootdevice",
+        "ssdp:all",
+        "urn:schemas-upnp-org:device:MediaServer:1",
+        "urn:schemas-upnp-org:device:MediaRenderer:1",
+        "urn:schemas-upnp-org:device:InternetGatewayDevice:1"
+    )
+
     /**
-     * Envoie le M-SEARCH et écoute les réponses pendant [listenMs].
+     * Envoie les M-SEARCH et écoute les réponses pendant [listenMs].
      * Retourne les infos par IP source (les appareils qui ont répondu).
      * Nécessite un MulticastLock côté appelant (Android).
      */
@@ -40,17 +49,23 @@ object UpnpProbe {
         return try {
             DatagramSocket().use { socket ->
                 socket.soTimeout = listenMs
-                val request = (
-                    "M-SEARCH * HTTP/1.1\r\n" +
-                        "HOST: 239.255.255.250:1900\r\n" +
-                        "MAN: \"ssdp:discover\"\r\n" +
-                        "MX: 2\r\n" +
-                        "ST: upnp:rootdevice\r\n" +
-                        "\r\n"
-                    ).toByteArray(Charsets.UTF_8)
-                socket.send(
-                    DatagramPacket(request, request.size, InetAddress.getByName("239.255.255.250"), 1900)
-                )
+                // Plusieurs ST : rootdevice + ssdp:all + MediaServer/MediaRenderer/
+                // InternetGatewayDevice → couvre NAS, TV, enceintes, boxes, IoT.
+                for (st in SEARCH_TARGETS) {
+                    val request = (
+                        "M-SEARCH * HTTP/1.1\r\n" +
+                            "HOST: 239.255.255.250:1900\r\n" +
+                            "MAN: \"ssdp:discover\"\r\n" +
+                            "MX: 2\r\n" +
+                            "ST: $st\r\n" +
+                            "\r\n"
+                        ).toByteArray(Charsets.UTF_8)
+                    runCatching {
+                        socket.send(
+                            DatagramPacket(request, request.size, InetAddress.getByName("239.255.255.250"), 1900)
+                        )
+                    }
+                }
                 val buffer = ByteArray(8192)
                 val deadline = System.currentTimeMillis() + listenMs
                 while (System.currentTimeMillis() < deadline) {

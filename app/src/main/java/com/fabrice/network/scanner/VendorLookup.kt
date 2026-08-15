@@ -23,7 +23,7 @@ object VendorLookup {
     /** Timeout réseau (connexion + lecture) en millisecondes. */
     private const val TIMEOUT_MS = 4_000
 
-    private const val USER_AGENT = "NetworkScanner/0.2.5"
+    private val USER_AGENT = "NetworkScanner/${BuildConfig.VERSION_NAME}"
 
     /**
      * Résout le fabricant d'une MAC.

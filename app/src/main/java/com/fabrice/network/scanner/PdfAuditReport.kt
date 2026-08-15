@@ -137,8 +137,8 @@ object PdfAuditReport {
         val headerPaint = Paint().apply { textSize = 9f; isFakeBoldText = true; color = Color.WHITE }
         val rowPaint = Paint().apply { textSize = 9f; color = Color.rgb(40, 40, 40) }
         val altPaint = Paint().apply { textSize = 9f; color = Color.rgb(60, 60, 60) }
-        val colWidths = floatArrayOf(90f, 110f, 100f, 90f, 90f, contentW - 480f)
-        val colNames = arrayOf("IP", "MAC", "Fabricant", "Système", "Statut", "Services")
+        val colWidths = floatArrayOf(85f, 105f, 95f, 95f, 80f, 80f, contentW - 540f)
+        val colNames = arrayOf("IP", "MAC", "Fabricant", "Modèle", "Système", "Statut", "Services")
         val rowH = 16f
 
         // Ligne d'en-tête
@@ -148,11 +148,12 @@ object PdfAuditReport {
         data.devices.forEachIndexed { i, d ->
             val statut = if (d.alive) "En ligne" else "ARP"
             val services = d.ports.take(6).joinToString(", ") { PortScanner.serviceName(it) }
+            val modele = d.product.ifBlank { d.model }
             val bg = if (i % 2 == 0) Color.WHITE else Color.rgb(245, 243, 238)
             drawRow(
                 canvas, margin, y, colWidths,
                 listOf(d.ip, d.mac.ifBlank { "—" }, d.vendor.ifBlank { "—" },
-                    d.os.ifBlank { "—" }, statut, services),
+                    modele.ifBlank { "—" }, d.os.ifBlank { "—" }, statut, services),
                 if (i % 2 == 0) rowPaint else altPaint, bg, rowH, contentW
             )
             y += rowH

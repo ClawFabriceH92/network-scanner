@@ -1,6 +1,9 @@
 package com.fabrice.network.scanner
 
 import android.content.SharedPreferences
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.NetworkInterface
@@ -23,7 +26,12 @@ data class Device(
     val banner: String = "",
     val latencyMs: Int? = null,
     val upnp: UpnpProbe.UpnpInfo? = null,
-    val smbShares: List<SmbShareScanner.SmbShare> = emptyList()
+    val smbShares: List<SmbShareScanner.SmbShare> = emptyList(),
+    val model: String = "",
+    val product: String = "",
+    val mdnsName: String = "",
+    val isRandomizedMac: Boolean = false,
+    val mdnsServices: List<String> = emptyList()
 )
 
 /** Résultat d'un ping : vivant ? + TTL de la réponse (pour l'OS) + latence. */
@@ -115,11 +123,27 @@ object NetworkScanner {
         return oui[prefix] ?: ""
     }
 
+    /**
+     * Détecte une adresse MAC localement administrée (privée / aléatoire).
+     * Le bit 0x02 du premier octet (U/L) est à 1 sur les MAC randomisées
+     * (Android/iOS/Win 11), jamais présentes dans les bases OUI fabricant.
+     */
+    fun isRandomizedMac(mac: String): Boolean {
+        val p = macPrefix(mac) ?: return false
+        val o = p.substring(0, 2).toIntOrNull(16) ?: return false
+        return (o and 0x02) != 0
+    }
+
     /** Détecte l'IP locale + préfixe du réseau actif (Android). */
     fun detectSubnet(): Pair<String, Int>? {
         val interfaces = NetworkInterface.getNetworkInterfaces() ?: return null
+        // Interfaces VPN / mobile / tunnel à ignorer : elles masqueraient le
+        // vrai sous-réseau Wi-Fi/Ethernet local quand un VPN est actif.
+        val ignoredPrefixes = listOf("tun", "ppp", "rmnet", "wg", "tap", "ipsec", "pptp")
         for (iface in interfaces) {
             if (!iface.isUp || iface.isLoopback) continue
+            val name = iface.name?.lowercase() ?: ""
+            if (ignoredPrefixes.any { name.startsWith(it) }) continue
             for (addr in iface.interfaceAddresses) {
                 val ipv4 = addr.address as? Inet4Address ?: continue
                 if (ipv4.isLoopbackAddress) continue
@@ -183,8 +207,14 @@ object NetworkScanner {
             if (!executor.isShutdown) executor.shutdownNow()
         }
 
-        // Découverte UPnP/SSDP : une seule requête multicast, réponses par IP
-        val upnpByIp = UpnpProbe.discover()
+        // Découverte multicast (UPnP/SSDP + mDNS + WS-Discovery) en parallèle :
+        // trois salves multicast simultanées, réponses agrégées par IP source.
+        val (upnpByIp, mdnsByIp, wsdByIp) = coroutineScope {
+            val upnp = async(Dispatchers.IO) { UpnpProbe.discover() }
+            val mdns = async(Dispatchers.IO) { MdnsResolver.discover() }
+            val wsd = async(Dispatchers.IO) { WsdResolver.discover() }
+            Triple(upnp.await(), mdns.await(), wsd.await())
+        }
 
         // Fusion ping + table ARP — TRIPLE lecture espacée : la table ARP
         // Android ne contient que les échanges récents, et un appareil qui
@@ -206,16 +236,31 @@ object NetworkScanner {
         val localIp = ip
         val gatewayIp = NetworkInfoProvider.readGateway()
         allIps.map { host ->
-            val mac = arp[host] ?: ""
-            var vendor = vendorFor(mac, oui)
-            // Repli en ligne si la base locale ne connaît pas le préfixe.
-            if (vendor.isBlank() && mac.isNotBlank()) {
-                vendor = VendorLookup.lookup(mac, vendorCache, prefs) ?: ""
-            }
-            val hostname = reverseDns(host)
+            var mac = arp[host] ?: ""
+            var hostname = reverseDns(host)
             val ports = if (scanPorts && alive.contains(host)) {
                 PortScanner.scanPorts(host, portsToScan)
             } else emptyList()
+
+            // NBNS (nom des machines Windows) : complète hostname + MAC si
+            // manquants, uniquement pour les hôtes vivants sans nom ou avec
+            // NetBIOS (137/139) ouvert. Jamais bloquant (runCatching).
+            val nbns = if (alive.contains(host) && (hostname.isBlank() || 137 in ports || 139 in ports)) {
+                runCatching { NbnsResolver.query(host) }.getOrNull()
+            } else null
+            if (nbns != null) {
+                if (mac.isBlank() && nbns.mac.isNotBlank()) mac = nbns.mac
+                if (hostname.isBlank() && nbns.name.isNotBlank()) hostname = nbns.name
+            }
+
+            // MAC localement administrée → fabricant « Adresse privée » et
+            // pas de requête en ligne (jamais présente dans la base OUI).
+            val randomized = isRandomizedMac(mac)
+            var vendor = if (randomized) "Adresse privée" else vendorFor(mac, oui)
+            if (!randomized && vendor.isBlank() && mac.isNotBlank()) {
+                vendor = VendorLookup.lookup(mac, vendorCache, prefs) ?: ""
+            }
+
             // Banner grab : interroge les services ouverts (HTTP/SSH/FTP/SMTP…)
             // pour préciser l'OS réel et enrichir la fiche appareil.
             val banner = if (alive.contains(host)) grabService(host, ports) else ""
@@ -231,6 +276,23 @@ object NetworkScanner {
             if (upnp != null && upnp.location.isNotBlank() && !upnp.hasInfo) {
                 upnp = UpnpProbe.fetchDescription(upnp.location)
             }
+
+            // mDNS + fingerprint banner + WS-Discovery : enrichissent le
+            // produit/modèle/nom et le type d'appareil.
+            val md = mdnsByIp[host]
+            val wsd = wsdByIp[host]
+            val fp = ServiceFingerprint.identify(banner)
+            val product = firstNonBlank(fp?.product, md?.model, upnp?.modelName).orEmpty()
+            val model = firstNonBlank(md?.model, upnp?.modelName).orEmpty()
+            if (hostname.isBlank()) {
+                hostname = firstNonBlank(md?.name, upnp?.friendlyName).orEmpty()
+            }
+            val classified = DeviceType.classify(vendor, hostname, ports, os)
+            val type = if (classified == "Inconnu") {
+                firstNonBlank(md?.deviceHint, wsd?.deviceHint, fp?.type).orEmpty()
+                    .ifBlank { classified }
+            } else classified
+
             Device(
                 ip = host,
                 mac = mac,
@@ -242,11 +304,16 @@ object NetworkScanner {
                 ports = ports,
                 ttl = ttlMap[host],
                 os = os,
-                type = DeviceType.classify(vendor, hostname, ports, os),
+                type = type,
                 banner = banner,
                 latencyMs = latencyMap[host],
                 upnp = upnp,
-                smbShares = smbShares
+                smbShares = smbShares,
+                model = model,
+                product = product,
+                mdnsName = md?.name ?: "",
+                isRandomizedMac = randomized,
+                mdnsServices = md?.services ?: emptyList()
             )
             // Tri : le périphérique qui lance le scan (isSelf) TOUT EN HAUT,
             // puis les autres par IP.
@@ -292,11 +359,14 @@ object NetworkScanner {
             val process = ProcessBuilder("/system/bin/ping", "-c", "1", "-W", "1", host)
                 .redirectErrorStream(true)
                 .start()
-            val ok = process.waitFor(3, TimeUnit.SECONDS) && process.exitValue() == 0
+            // Lire la sortie AVANT waitFor : un tampon plein peut bloquer le
+            // process si on attend d'abord sa terminaison. Avec -c 1 -W 1 le
+            // ping sort en ~1 s max, donc readText() ne peut pas pendre.
             val output = runCatching {
-                val text = process.inputStream.bufferedReader().use { it.readText() }
-                text
+                process.inputStream.bufferedReader().use { it.readText() }
             }.getOrDefault("")
+            val ok = runCatching { process.waitFor(3, TimeUnit.SECONDS) && process.exitValue() == 0 }
+                .getOrDefault(false)
             runCatching { process.destroy() }
             val ttl = parseTtl(output)
             val latency = parseLatency(output)
@@ -325,4 +395,8 @@ object NetworkScanner {
             ""
         }
     }
+
+    /** Premier élément non vide/non blanc d'une liste de valeurs, ou null. */
+    private fun firstNonBlank(vararg values: String?): String? =
+        values.firstOrNull { !it.isNullOrBlank() }?.trim()
 }

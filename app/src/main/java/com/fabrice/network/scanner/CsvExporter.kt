@@ -14,12 +14,14 @@ object CsvExporter {
         vulnsByIp: Map<String, VulnScanner.DeviceVulns> = emptyMap()
     ): String = buildString {
         append('\uFEFF') // BOM UTF-8
-        appendLine("IP;MAC;Fabricant;Nom réseau;Système;Statut;Vulnérabilités;Score")
+        appendLine("IP;MAC;Fabricant;Nom réseau;Produit;Modèle;Système;Statut;Vulnérabilités;Score")
         devices.forEach { d ->
             append(csv(d.ip)); append(';')
             append(csv(d.mac)); append(';')
             append(csv(d.vendor)); append(';')
             append(csv(d.hostname)); append(';')
+            append(csv(d.product)); append(';')
+            append(csv(d.model)); append(';')
             append(csv(d.os)); append(';')
             append(if (d.alive) "En ligne" else "Vu récemment (ARP)"); append(';')
             val v = vulnsByIp[d.ip]
