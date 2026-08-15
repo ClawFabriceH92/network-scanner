@@ -13,6 +13,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,23 +21,29 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -53,8 +60,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.fabrice.network.scanner.BluetoothScanner
@@ -123,6 +132,8 @@ fun ScannerScreen() {
     var cveUpdating by remember { mutableStateOf(false) }
     var cveUpdateResult by remember { mutableStateOf<String?>(null) }
     var cveStale by remember { mutableStateOf(false) }
+    // Menu d'actions secondaires (⋮) : rapport, export, aide, à propos
+    var menuExpanded by remember { mutableStateOf(false) }
 
     fun runScan() {
         scope.launch {
@@ -249,6 +260,20 @@ fun ScannerScreen() {
         }
     }
 
+    // Fiche appareil : écran plein au lieu d'un AlertDialog (plus lisible)
+    val detail = selected
+    if (detail != null) {
+        DeviceDetailScreen(
+            device = detail,
+            store = deviceStore,
+            isNew = ScanHistory.identityKey(detail) in newKeys,
+            vulns = vulnsByIp[detail.ip],
+            onDismiss = { selected = null },
+            onSaved = { refreshTick++ }
+        )
+        return
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -261,30 +286,102 @@ fun ScannerScreen() {
                         }
                     )
                 },
-                actions = {
+                navigationIcon = {
                     if (screen != 0) {
                         TextButton(onClick = { screen = 0 }) { Text("← Retour") }
-                    } else {
-                        if (devices.isNotEmpty() && !scanning) {
-                            TextButton(onClick = {
-                                exportPdf(context, devices, vulnsByIp, selfIp)
-                            }) {
-                                Text("📄 Rapport")
+                    }
+                },
+                actions = {
+                    if (screen == 0) {
+                        Box {
+                            TextButton(onClick = { menuExpanded = true }) {
+                                Text("⋮", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                            }
+                            DropdownMenu(
+                                expanded = menuExpanded,
+                                onDismissRequest = { menuExpanded = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("📄 Rapport PDF") },
+                                    onClick = {
+                                        menuExpanded = false
+                                        exportPdf(context, devices, vulnsByIp, selfIp)
+                                    },
+                                    enabled = devices.isNotEmpty() && !scanning
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("📤 Export CSV") },
+                                    onClick = {
+                                        menuExpanded = false
+                                        exportCsv(context, devices, vulnsByIp)
+                                    },
+                                    enabled = devices.isNotEmpty() && !scanning
+                                )
+                                HorizontalDivider()
+                                DropdownMenuItem(
+                                    text = { Text("❓ Aide") },
+                                    onClick = {
+                                        menuExpanded = false
+                                        screen = 1
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("ℹ️ À propos") },
+                                    onClick = {
+                                        menuExpanded = false
+                                        screen = 2
+                                    }
+                                )
                             }
                         }
-                        if (devices.isNotEmpty() && !scanning) {
-                            TextButton(onClick = { exportCsv(context, devices, vulnsByIp) }) {
-                                Text("📤 Export")
-                            }
-                        }
-                        TextButton(onClick = { runScan() }, enabled = !scanning) {
-                            Text(if (scanning) "Scan…" else "🔄 Scanner")
-                        }
-                        TextButton(onClick = { screen = 1 }) { Text("?") }
-                        TextButton(onClick = { screen = 2 }) { Text("ℹ️") }
                     }
                 }
             )
+        },
+        bottomBar = {
+            if (screen == 0) {
+                NavigationBar {
+                    NavigationBarItem(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        icon = { Text("📱", fontSize = 20.sp) },
+                        label = { Text("Périphériques") }
+                    )
+                    NavigationBarItem(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        icon = { Text("🌐", fontSize = 20.sp) },
+                        label = { Text("Réseau") }
+                    )
+                    NavigationBarItem(
+                        selected = selectedTab == 2,
+                        onClick = { selectedTab = 2 },
+                        icon = { Text("📡", fontSize = 20.sp) },
+                        label = { Text("Bluetooth") }
+                    )
+                }
+            }
+        },
+        floatingActionButton = {
+            if (screen == 0 && selectedTab == 0) {
+                ExtendedFloatingActionButton(
+                    onClick = { if (!scanning) runScan() },
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                ) {
+                    if (scanning) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("Scan en cours…")
+                    } else {
+                        Text("🔍 Scanner")
+                    }
+                }
+            }
         },
         snackbarHost = { SnackbarHost(snackbar) }
     ) { padding ->
@@ -298,172 +395,158 @@ fun ScannerScreen() {
             } else if (screen == 2) {
                 AboutScreen()
             } else {
-            // Onglets : Périphériques / Réseau / Bluetooth
-            TabRow(selectedTabIndex = selectedTab) {
-                Tab(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    text = { Text("📱 Périphériques") }
-                )
-                Tab(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    text = { Text("🌐 Réseau") }
-                )
-                Tab(
-                    selected = selectedTab == 2,
-                    onClick = { selectedTab = 2 },
-                    text = { Text("📡 Bluetooth") }
-                )
-            }
-            if (selectedTab == 1) {
-                NetworkScreen()
-            } else if (selectedTab == 2) {
-                BluetoothScreen(
-                    devices = btDevices,
-                    scanning = btScanning,
-                    error = btError,
-                    onScan = { runBtScan(context) }
-                )
-            } else {
-            if (scanning) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    CircularProgressIndicator(Modifier.width(24.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(12.dp))
-                    Text("Recherche d'appareils… ($progress)")
-                }
-            }
-            if (newDevices.isNotEmpty()) {
-                NewDevicesBanner(newDevices)
-            }
-            NetworkPanel()
-            // Bandeau base CVE : obsolète ou mise à jour proposée
-            if (!cveUpdating && (cveStale || cveUpdateResult != null)) {
-                CveBanner(
-                    version = cveDbVersion,
-                    stale = cveStale,
-                    result = cveUpdateResult,
-                    onUpdate = { updateCveBase(context) { msg -> cveUpdateResult = msg } },
-                    onDismiss = { cveUpdateResult = null }
-                )
-            }
-            error?.let {
-                Text(
-                    it,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(16.dp)
-                )
-            }
-            if (devices.isEmpty() && !scanning) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    Text(
-                        "Appuie sur Scanner pour détecter les appareils du réseau local.\nPing, ARP, fabricants, services (ports) et réveil à distance.",
-                        style = MaterialTheme.typography.bodyLarge
+                when (selectedTab) {
+                    1 -> NetworkScreen()
+                    2 -> BluetoothScreen(
+                        devices = btDevices,
+                        scanning = btScanning,
+                        error = btError,
+                        onScan = { runBtScan(context) }
                     )
-                    Spacer(Modifier.height(16.dp))
-                    Button(onClick = { runScan() }) { Text("📡 Scanner le réseau") }
-                }
-            } else if (devices.isNotEmpty()) {
-                // Bandeau : appareil qui lance le scan + compteur
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 4.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color(0xFFF4EDE0)
-                    )
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("📱 Scan depuis ", style = MaterialTheme.typography.labelMedium)
-                        Text(
-                            selfIp ?: "—",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(Modifier.weight(1f))
-                        Text(
-                            "${devices.size} appareils",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-                // Mode de scan de ports (standard / élargi)
-                PortModeSelector(
-                    mode = portMode,
-                    onChange = { newMode ->
-                        portMode = newMode
-                        context.getSharedPreferences("scan_prefs", Context.MODE_PRIVATE)
-                            .edit().putInt("port_mode", newMode).apply()
-                    }
-                )
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(devices, key = { it.ip }) { device ->
-                        val key = ScanHistory.identityKey(device)
-                        // Lecture du tick pour recomposer après renommage/favori
-                        @Suppress("UNUSED_EXPRESSION") refreshTick
-                        val vulns = vulnsByIp[device.ip]
-                        DeviceCard(
-                            device = device,
-                            displayName = deviceStore.displayName(device),
-                            isFavorite = deviceStore.isFavorite(key),
-                            isNew = key in newKeys,
-                            vulns = vulns,
-                            onClick = { selected = device }
-                        )
+                    else -> {
+                        // Onglet Périphériques
+                        if (scanning) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(Modifier.width(24.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.width(12.dp))
+                                Text("Recherche d'appareils… ($progress)")
+                            }
+                        }
+                        if (newDevices.isNotEmpty()) {
+                            NewDevicesBanner(newDevices)
+                        }
+                        NetworkPanel()
+                        // Bandeau base CVE : obsolète ou mise à jour proposée
+                        if (!cveUpdating && (cveStale || cveUpdateResult != null)) {
+                            CveBanner(
+                                version = cveDbVersion,
+                                stale = cveStale,
+                                result = cveUpdateResult,
+                                onUpdate = { updateCveBase(context) { msg -> cveUpdateResult = msg } },
+                                onDismiss = { cveUpdateResult = null }
+                            )
+                        }
+                        error?.let {
+                            Text(
+                                it,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.padding(16.dp)
+                            )
+                        }
+                        if (devices.isEmpty() && !scanning) {
+                            EmptyDevicesState(onScan = { runScan() })
+                        } else if (devices.isNotEmpty()) {
+                            // Bandeau : appareil qui lance le scan + compteur
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = Color(0xFFF4EDE0)
+                                )
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("📱 Scan depuis ", style = MaterialTheme.typography.labelMedium)
+                                    Text(
+                                        selfIp ?: "—",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Spacer(Modifier.weight(1f))
+                                    Text(
+                                        "${devices.size} appareils",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            // Mode de scan de ports (masqué pendant un scan)
+                            if (!scanning) {
+                                PortModeSelector(
+                                    mode = portMode,
+                                    onChange = { newMode ->
+                                        portMode = newMode
+                                        context.getSharedPreferences("scan_prefs", Context.MODE_PRIVATE)
+                                            .edit().putInt("port_mode", newMode).apply()
+                                    }
+                                )
+                            }
+                            LazyColumn(
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(
+                                    start = 12.dp,
+                                    end = 12.dp,
+                                    top = 4.dp,
+                                    bottom = 88.dp
+                                ),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                items(devices, key = { it.ip }) { device ->
+                                    val key = ScanHistory.identityKey(device)
+                                    // Lecture du tick pour recomposer après renommage/favori
+                                    @Suppress("UNUSED_EXPRESSION") refreshTick
+                                    val vulns = vulnsByIp[device.ip]
+                                    DeviceCard(
+                                        device = device,
+                                        displayName = deviceStore.displayName(device),
+                                        isFavorite = deviceStore.isFavorite(key),
+                                        isNew = key in newKeys,
+                                        vulns = vulns,
+                                        onClick = { selected = device }
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
-            } // fin onglet Périphériques (else)
-            } // fin écran scan (screen == 0)
         }
     }
+}
 
-    selected?.let { device ->
-        val key = ScanHistory.identityKey(device)
-        DeviceDialog(
-            device = device,
-            store = deviceStore,
-            isNew = key in newKeys,
-            vulns = vulnsByIp[device.ip],
-            onDismiss = { selected = null },
-            onSaved = { refreshTick++ },
-            onWol = {
-                scope.launch {
-                    val mac = device.mac
-                    val subnet = NetworkScanner.detectSubnet()
-                    val broadcast = if (subnet != null) NetworkScanner.broadcastAddress(subnet.first, subnet.second)
-                    else "255.255.255.255"
-                    val ok = withMulticastLock(context) {
-                        WakeOnLan.send(mac, broadcast)
-                    }
-                    val msg = if (ok) "Magic packet envoyé → $mac" else "Échec de l'envoi WoL"
-                    snackbar.showSnackbar(msg)
-                }
-            }
+/** État vide soigné : grand emoji décoratif + message + bouton arrondi. */
+@Composable
+private fun EmptyDevicesState(onScan: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text("📡", fontSize = 64.sp)
+        Spacer(Modifier.height(16.dp))
+        Text(
+            "Aucun appareil détecté",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold
         )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Appuie sur Scanner pour détecter les appareils du réseau local : ping, ARP, fabricants, services (ports) et réveil à distance.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(20.dp))
+        Button(
+            onClick = onScan,
+            shape = RoundedCornerShape(24.dp)
+        ) {
+            Text("📡 Scanner le réseau")
+        }
     }
 }
 
@@ -769,26 +852,63 @@ private fun PortBadge(port: Int) {
     }
 }
 
+/**
+ * Fiche appareil plein écran : sections titrées, scroll, couleurs de sévérité
+ * cohérentes. Remplace l'ancien AlertDialog (trop chargé).
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DeviceDialog(
+private fun DeviceDetailScreen(
     device: Device,
     store: DeviceStore,
     isNew: Boolean,
     vulns: VulnScanner.DeviceVulns?,
     onDismiss: () -> Unit,
-    onSaved: () -> Unit,
-    onWol: () -> Unit
+    onSaved: () -> Unit
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
     val key = ScanHistory.identityKey(device)
     var customName by remember { mutableStateOf(store.customName(key)) }
     var isFav by remember { mutableStateOf(store.isFavorite(key)) }
     val wolAvailable = device.mac.isNotBlank()
+    val name = store.displayName(device)
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(store.displayName(device)) },
-        text = {
-            Column {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                navigationIcon = {
+                    TextButton(onClick = {
+                        store.setCustomName(key, customName)
+                        onSaved()
+                        onDismiss()
+                    }) { Text("← Retour") }
+                }
+            )
+        },
+        snackbarHost = { SnackbarHost(snackbar) }
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .padding(padding)
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // --- Identité ---
+            SectionCard("📱 Identité") {
+                if (isNew) {
+                    Text(
+                        "🆕 Nouveau sur le réseau",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF2E7D32),
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.height(4.dp))
+                }
                 InfoRow("IP", device.ip)
                 InfoRow("MAC", device.mac.ifBlank { "non disponible" })
                 InfoRow("Fabricant", device.vendor.ifBlank { "inconnu" })
@@ -798,19 +918,43 @@ private fun DeviceDialog(
                 device.latencyMs?.let { InfoRow("Latence", "$it ms") }
                 device.ttl?.let { InfoRow("TTL", "$it") }
                 InfoRow("Statut", if (device.alive) "En ligne" else "Vu récemment (ARP)")
-                InfoRow("Historique", if (isNew) "🆕 Nouveau sur le réseau" else "✅ Déjà vu auparavant")
-                device.upnp?.let { u ->
-                    if (u.friendlyName.isNotBlank()) InfoRow("Nom UPnP", u.friendlyName)
-                    if (u.manufacturer.isNotBlank() && device.vendor.isBlank()) InfoRow("Fab. UPnP", u.manufacturer)
-                    if (u.modelName.isNotBlank()) InfoRow("Modèle", u.modelName)
-                    if (u.modelDescription.isNotBlank()) InfoRow("Description", u.modelDescription)
-                    if (u.server.isNotBlank()) InfoRow("Serveur", u.server)
-                }
-                if (device.banner.isNotBlank()) InfoRow("Bannière", device.banner)
-                if (device.ports.isNotEmpty()) {
-                    Spacer(Modifier.height(8.dp))
-                    Text("Services ouverts :", style = MaterialTheme.typography.labelMedium)
+                if (device.isSelf) {
                     Spacer(Modifier.height(4.dp))
+                    SelfBadge()
+                }
+            }
+
+            // --- UPnP ---
+            device.upnp?.let { u ->
+                if (u.friendlyName.isNotBlank() || u.manufacturer.isNotBlank() ||
+                    u.modelName.isNotBlank() || u.modelDescription.isNotBlank() ||
+                    u.server.isNotBlank()
+                ) {
+                    SectionCard("🔌 UPnP") {
+                        if (u.friendlyName.isNotBlank()) InfoRow("Nom", u.friendlyName)
+                        if (u.manufacturer.isNotBlank() && device.vendor.isBlank())
+                            InfoRow("Fabricant", u.manufacturer)
+                        if (u.modelName.isNotBlank()) InfoRow("Modèle", u.modelName)
+                        if (u.modelDescription.isNotBlank()) InfoRow("Description", u.modelDescription)
+                        if (u.server.isNotBlank()) InfoRow("Serveur", u.server)
+                    }
+                }
+            }
+
+            // --- Bannière ---
+            if (device.banner.isNotBlank()) {
+                SectionCard("🧾 Bannière") {
+                    Text(
+                        device.banner,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
+
+            // --- Services ouverts ---
+            if (device.ports.isNotEmpty()) {
+                SectionCard("🔓 Services ouverts") {
                     device.ports.forEach { port ->
                         Row(Modifier.padding(vertical = 2.dp)) {
                             Text(
@@ -827,24 +971,30 @@ private fun DeviceDialog(
                         }
                     }
                 }
-                vulns?.let { v ->
-                    if (!v.isEmpty) {
-                        Spacer(Modifier.height(12.dp))
-                        VulnSection(v)
-                    } else if (v.services.isNotEmpty()) {
-                        Spacer(Modifier.height(8.dp))
+            }
+
+            // --- Vulnérabilités ---
+            vulns?.let { v ->
+                if (!v.isEmpty) {
+                    SectionCard("🛡️ Vulnérabilités") { VulnSection(v) }
+                } else if (v.services.isNotEmpty()) {
+                    SectionCard("🛡️ Vulnérabilités") {
                         Text(
-                            "🛡️ Aucune CVE connue pour ce service",
+                            "Aucune CVE connue pour ce service",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
-                if (device.smbShares.isNotEmpty()) {
-                    Spacer(Modifier.height(12.dp))
-                    SmbSection(device.smbShares)
-                }
-                Spacer(Modifier.height(12.dp))
+            }
+
+            // --- Partages SMB ---
+            if (device.smbShares.isNotEmpty()) {
+                SectionCard("📁 Partages SMB") { SmbSection(device.smbShares) }
+            }
+
+            // --- Personnalisation & actions ---
+            SectionCard("✏️ Personnalisation") {
                 OutlinedTextField(
                     value = customName,
                     onValueChange = { customName = it },
@@ -852,38 +1002,81 @@ private fun DeviceDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+                Spacer(Modifier.height(12.dp))
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp),
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    TextButton(onClick = {
-                        isFav = !isFav
-                        store.setFavorite(key, isFav)
-                        onSaved()
-                    }) {
+                    Button(
+                        onClick = {
+                            isFav = !isFav
+                            store.setFavorite(key, isFav)
+                            onSaved()
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
                         Text(if (isFav) "★ Favori" else "☆ Favori")
                     }
                     if (wolAvailable) {
-                        TextButton(onClick = onWol) {
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    val mac = device.mac
+                                    val subnet = NetworkScanner.detectSubnet()
+                                    val broadcast = if (subnet != null)
+                                        NetworkScanner.broadcastAddress(subnet.first, subnet.second)
+                                    else "255.255.255.255"
+                                    val ok = withMulticastLock(context) {
+                                        WakeOnLan.send(mac, broadcast)
+                                    }
+                                    val msg = if (ok) "Magic packet envoyé → $mac"
+                                    else "Échec de l'envoi WoL"
+                                    snackbar.showSnackbar(msg)
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
                             Text("⏰ Réveiller (WoL)")
                         }
                     }
                 }
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        store.setCustomName(key, customName)
+                        onSaved()
+                        onDismiss()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Enregistrer")
+                }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                store.setCustomName(key, customName)
-                onSaved()
-                onDismiss()
-            }) { Text("OK") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Fermer") }
         }
-    )
+    }
+}
+
+/** Carte de section titrée pour la fiche appareil. */
+@Composable
+private fun SectionCard(
+    title: String,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(Modifier.height(8.dp))
+            content()
+        }
+    }
 }
 
 @Composable

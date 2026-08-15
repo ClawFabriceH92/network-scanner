@@ -28,7 +28,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.fabrice.network.scanner.BluetoothScanner
 
 /**
@@ -92,13 +94,24 @@ fun BluetoothScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                Text(
-                    "Appuie sur Scanner pour détecter les appareils Bluetooth/BLE autour de toi.\n" +
-                        "Nécessite le Bluetooth actif et les permissions.",
-                    style = MaterialTheme.typography.bodyLarge
-                )
+                Text("📡", fontSize = 64.sp)
                 Spacer(Modifier.height(16.dp))
-                Button(onClick = onScan) { Text("📡 Scanner Bluetooth") }
+                Text(
+                    "Aucun appareil Bluetooth détecté",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Appuie sur Scanner pour détecter les appareils Bluetooth/BLE autour de toi. Nécessite le Bluetooth actif et les permissions.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(Modifier.height(20.dp))
+                Button(onClick = onScan, shape = RoundedCornerShape(24.dp)) {
+                    Text("📡 Scanner Bluetooth")
+                }
             }
         } else if (devices.isNotEmpty()) {
             LazyColumn(
