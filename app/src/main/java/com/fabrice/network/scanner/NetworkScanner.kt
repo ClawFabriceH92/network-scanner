@@ -227,7 +227,7 @@ object NetworkScanner {
             kotlinx.coroutines.delay(700)
             readArp()
         })
-        val allIps = (alive + arp.keys).toSortedSet()
+        val allIps = (alive + arp.keys + mdnsByIp.keys + wsdByIp.keys + upnpByIp.keys).toSortedSet()
 
         // Cache en mémoire des fabricants résolus en ligne : évite d'interroger
         // deux fois le même préfixe OUI au cours d'un même scan.
@@ -238,14 +238,19 @@ object NetworkScanner {
         allIps.map { host ->
             var mac = arp[host] ?: ""
             var hostname = reverseDns(host)
-            val ports = if (scanPorts && alive.contains(host)) {
+            // Hôte « vivant » : a répondu au ping OU à une découverte multicast
+            // (mDNS/WSD/UPnP). Un appareil qui répond en multicast est forcément
+            // en ligne — il mérite le scan de ports et le statut « En ligne ».
+            val responded = alive.contains(host) || host in mdnsByIp ||
+                host in wsdByIp || host in upnpByIp
+            val ports = if (scanPorts && responded) {
                 PortScanner.scanPorts(host, portsToScan)
             } else emptyList()
 
             // NBNS (nom des machines Windows) : complète hostname + MAC si
             // manquants, uniquement pour les hôtes vivants sans nom ou avec
             // NetBIOS (137/139) ouvert. Jamais bloquant (runCatching).
-            val nbns = if (alive.contains(host) && (hostname.isBlank() || 137 in ports || 139 in ports)) {
+            val nbns = if (responded && (hostname.isBlank() || 137 in ports || 139 in ports)) {
                 runCatching { NbnsResolver.query(host) }.getOrNull()
             } else null
             if (nbns != null) {
@@ -263,11 +268,11 @@ object NetworkScanner {
 
             // Banner grab : interroge les services ouverts (HTTP/SSH/FTP/SMTP…)
             // pour préciser l'OS réel et enrichir la fiche appareil.
-            val banner = if (alive.contains(host)) grabService(host, ports) else ""
+            val banner = if (responded) grabService(host, ports) else ""
             val os = OsFingerprint.guess(ttlMap[host], ports, hostname, banner.ifBlank { null })
             // Partages SMB (dossiers partagés, y compris cachés $) — seulement si
             // le port 445 est ouvert, jamais bloquant (runCatching).
-            val smbShares = if (alive.contains(host) && 445 in ports) {
+            val smbShares = if (responded && 445 in ports) {
                 runCatching { SmbShareScanner.scanShares(host, timeoutMs = 1_500) }
                     .getOrDefault(emptyList())
             } else emptyList()
@@ -298,7 +303,7 @@ object NetworkScanner {
                 mac = mac,
                 vendor = vendor,
                 hostname = hostname,
-                alive = alive.contains(host),
+                alive = responded,
                 isSelf = host == localIp,
                 isGateway = host == gatewayIp,
                 ports = ports,
