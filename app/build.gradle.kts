@@ -1,3 +1,6 @@
+import java.io.File
+import java.util.Base64
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -12,13 +15,30 @@ android {
         applicationId = "com.fabrice.network.scanner"
         minSdk = 26
         targetSdk = 35
-        versionCode = 24
-        versionName = "1.5.2"
+        versionCode = 25
+        versionName = "1.5.3"
+    }
+
+    signingConfigs {
+        create("release") {
+            val b64 = System.getenv("NETWORK_SCANNER_KEYSTORE_B64")
+            if (!b64.isNullOrBlank()) {
+                val tmp = System.getenv("RUNNER_TEMP") ?: System.getProperty("java.io.tmpdir") ?: "/tmp"
+                val ks = File(tmp, "network-scanner-release.keystore")
+                ks.writeBytes(Base64.getDecoder().decode(b64))
+                storeFile = ks
+                storePassword = System.getenv("NETWORK_SCANNER_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("NETWORK_SCANNER_KEY_ALIAS")
+                keyPassword = System.getenv("NETWORK_SCANNER_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = if (System.getenv("NETWORK_SCANNER_KEYSTORE_B64").isNullOrBlank()) null
+                else signingConfigs.getByName("release")
         }
         debug {
             isMinifyEnabled = false
