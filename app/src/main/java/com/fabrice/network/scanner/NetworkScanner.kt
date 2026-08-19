@@ -31,7 +31,11 @@ data class Device(
     val product: String = "",
     val mdnsName: String = "",
     val isRandomizedMac: Boolean = false,
-    val mdnsServices: List<String> = emptyList()
+    val mdnsServices: List<String> = emptyList(),
+    val snmpDescr: String? = null,
+    val snmpName: String? = null,
+    val snmpLocation: String? = null,
+    val snmpUptime: Long? = null
 )
 
 /** Résultat d'un ping : vivant ? + TTL de la réponse (pour l'OS) + latence. */
@@ -287,6 +291,12 @@ object NetworkScanner {
                 runCatching { SmbShareScanner.scanShares(host, timeoutMs = 1_500) }
                     .getOrDefault(emptyList())
             } else emptyList()
+            // SNMPv1 (sysDescr/sysName/sysLocation/uptime) — seulement si le port
+            // 161 est ouvert (détecté par le scan de ports élargi). runCatching +
+            // timeout court, jamais bloquant pour le reste du scan.
+            val snmp = if (responded && 161 in ports) {
+                runCatching { SnmpScanner.probeBlocking(host) }.getOrNull()
+            } else null
             // Infos UPnP éventuelles (friendlyName, fabricant, modèle…)
             var upnp = upnpByIp[host]
             if (upnp != null && upnp.location.isNotBlank() && !upnp.hasInfo) {
@@ -329,7 +339,11 @@ object NetworkScanner {
                 product = product,
                 mdnsName = md?.name ?: "",
                 isRandomizedMac = randomized,
-                mdnsServices = md?.services ?: emptyList()
+                mdnsServices = md?.services ?: emptyList(),
+                snmpDescr = snmp?.descr,
+                snmpName = snmp?.name,
+                snmpLocation = snmp?.location,
+                snmpUptime = snmp?.uptimeSeconds
             )
             // Tri : le périphérique qui lance le scan (isSelf) TOUT EN HAUT,
             // puis les autres par IP.

@@ -17,18 +17,38 @@ import javax.crypto.spec.SecretKeySpec
  * 3. POST /login/session → session_token (HMAC-SHA1(challenge, app_token))
  * 4. GET /dhcp/leases + /lan/browser/pub avec X-Fbx-App-Auth
  *
- * Le token d'app est persisté en SharedPreferences (clé app_token_freebox).
+ * Le token d'app est persisté en SharedPreferences, keyé par la passerelle
+ * (`freebox_app_token_<gateway>`) pour réutiliser le bon token quand on
+ * revient sur le même réseau.
  */
 class FreeboxBoxClient(private val context: Context) : BoxClient {
+
+    companion object {
+        /** Préfixe des clés de token d'app (`freebox_app_token_<gateway>`). */
+        const val TOKEN_PREFIX = "freebox_app_token_"
+        private const val PREFS = "box_prefs"
+
+        /** Efface tous les tokens d'app (utilisé au changement de passerelle). */
+        fun clearTokens(context: Context) {
+            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val editor = prefs.edit()
+            prefs.all.keys.filter { it.startsWith(TOKEN_PREFIX) }.forEach { editor.remove(it) }
+            editor.remove("pending_track").remove("pending_token")
+            editor.apply()
+        }
+    }
 
     override val name = "Freebox"
     override val baseUrl = "http://192.168.0.254/api/v9" // cleartext autorisé par networkSecurityConfig
 
     private val prefs by lazy {
-        context.getSharedPreferences("box_tokens", Context.MODE_PRIVATE)
+        context.getSharedPreferences("box_prefs", Context.MODE_PRIVATE)
     }
 
-    private fun appToken(): String? = prefs.getString("app_token_freebox", null)
+    /** Clé du token d'app pour la passerelle courante. */
+    private fun tokenKey(): String = TOKEN_PREFIX + NetworkInfoProvider.readGateway()
+
+    private fun appToken(): String? = prefs.getString(tokenKey(), null)
 
     private fun http(
         method: String,
@@ -93,7 +113,7 @@ class FreeboxBoxClient(private val context: Context) : BoxClient {
         if (status == "granted") {
             val token = prefs.getString("pending_token", null)
             if (token != null) {
-                prefs.edit().putString("app_token_freebox", token)
+                prefs.edit().putString(tokenKey(), token)
                     .remove("pending_track").remove("pending_token").apply()
             }
         }

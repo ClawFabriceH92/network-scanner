@@ -12,8 +12,8 @@ android {
         applicationId = "com.fabrice.network.scanner"
         minSdk = 26
         targetSdk = 35
-        versionCode = 24
-        versionName = "1.5.2"
+        versionCode = 25
+        versionName = "1.6.0"
     }
 
     buildTypes {

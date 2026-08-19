@@ -40,6 +40,18 @@ object BoxManager {
         }
         cachedClient = client
         cachedGateway = gateway
+
+        // Annuaire des boxes : mémorise le type reconnu (Freebox/Livebox) avec
+        // un nom par défaut si la box n'est pas encore connue.
+        val prefs = context.getSharedPreferences(BoxStore.PREFS, Context.MODE_PRIVATE)
+        val boxType = when {
+            vendor.contains("freebox", true) || gateway == "192.168.0.254" -> "Freebox"
+            vendor.contains("sagemcom", true) || vendor.contains("technicolor", true) -> "Livebox"
+            else -> null
+        }
+        if (boxType != null && BoxStore.getBoxName(prefs, gateway) == null) {
+            BoxStore.saveBox(prefs, gateway, "Box $boxType", boxType)
+        }
         return client
     }
 

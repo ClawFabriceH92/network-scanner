@@ -32,6 +32,10 @@ object ScanPersistence {
             o.put("type", d.type)
             o.put("banner", d.banner)
             o.put("latencyMs", d.latencyMs ?: JSONObject.NULL)
+            o.put("snmpDescr", d.snmpDescr ?: JSONObject.NULL)
+            o.put("snmpName", d.snmpName ?: JSONObject.NULL)
+            o.put("snmpLocation", d.snmpLocation ?: JSONObject.NULL)
+            o.put("snmpUptime", d.snmpUptime ?: JSONObject.NULL)
             arr.put(o)
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -64,7 +68,11 @@ object ScanPersistence {
                     ttl = if (o.isNull("ttl")) null else o.optInt("ttl"),
                     type = o.optString("type", "Inconnu"),
                     banner = o.optString("banner", ""),
-                    latencyMs = if (o.isNull("latencyMs")) null else o.optInt("latencyMs")
+                    latencyMs = if (o.isNull("latencyMs")) null else o.optInt("latencyMs"),
+                    snmpDescr = if (o.isNull("snmpDescr")) null else o.optString("snmpDescr"),
+                    snmpName = if (o.isNull("snmpName")) null else o.optString("snmpName"),
+                    snmpLocation = if (o.isNull("snmpLocation")) null else o.optString("snmpLocation"),
+                    snmpUptime = if (o.isNull("snmpUptime")) null else o.optLong("snmpUptime")
                 )
             }
         } catch (e: Exception) {

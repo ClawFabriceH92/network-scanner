@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Star
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -84,6 +85,7 @@ import androidx.core.content.FileProvider
 import com.fabrice.network.scanner.BluetoothScanner
 import com.fabrice.network.scanner.BoxClient
 import com.fabrice.network.scanner.BoxManager
+import com.fabrice.network.scanner.BoxStore
 import com.fabrice.network.scanner.BuildConfig
 import com.fabrice.network.scanner.CsvExporter
 import com.fabrice.network.scanner.CveDatabaseStore
@@ -93,8 +95,10 @@ import com.fabrice.network.scanner.Device
 import com.fabrice.network.scanner.DeviceStore
 import com.fabrice.network.scanner.DeviceType
 import com.fabrice.network.scanner.FreeboxBoxClient
+import com.fabrice.network.scanner.GatewayWatcher
 import com.fabrice.network.scanner.HistoryStore
 import com.fabrice.network.scanner.NetworkScanner
+import com.fabrice.network.scanner.NetworkInfoProvider
 import com.fabrice.network.scanner.OuiDatabase
 import com.fabrice.network.scanner.PdfAuditReport
 import com.fabrice.network.scanner.PortScanner
@@ -102,6 +106,7 @@ import com.fabrice.network.scanner.ScanHistory
 import com.fabrice.network.scanner.ScanPersistence
 import com.fabrice.network.scanner.ServiceFingerprint
 import com.fabrice.network.scanner.SmbShareScanner
+import com.fabrice.network.scanner.SnmpScanner
 import com.fabrice.network.scanner.VulnScanner
 import com.fabrice.network.scanner.WakeOnLan
 import com.fabrice.network.scanner.ui.theme.LocalMonoTextStyle
@@ -201,6 +206,20 @@ fun ScannerScreen() {
     var onlineOnly by remember { mutableStateOf(false) }
     var groupByType by remember { mutableStateOf(false) }
     var riskBannerDismissed by remember { mutableStateOf(false) }
+    // Bannière « nouveau réseau détecté » après un changement de passerelle
+    var newNetworkBanner by remember { mutableStateOf(false) }
+
+    // Détecte un changement de passerelle : invalide la config box, efface les
+    // tokens et affiche la bannière « nouveau réseau ». Retourne true si un
+    // changement a eu lieu (le scan doit alors être relancé).
+    fun onGatewayChangeDetected(): Boolean {
+        val gw = NetworkInfoProvider.readGateway()
+        if (!GatewayWatcher.remember(context, gw)) return false
+        BoxManager.reset()
+        FreeboxBoxClient.clearTokens(context)
+        newNetworkBanner = true
+        return true
+    }
 
     fun runScan() {
         scope.launch {
@@ -284,7 +303,15 @@ fun ScannerScreen() {
             scanning = false
             scanCount++
             refreshTick++
+            // Changement de passerelle détecté après ce scan → rescan auto.
+            if (onGatewayChangeDetected()) runScan()
         }
+    }
+
+    // Au démarrage : détecte un éventuel changement de passerelle depuis la
+    // dernière session → reset box + rescan automatique sur le nouveau réseau.
+    LaunchedEffect(Unit) {
+        if (onGatewayChangeDetected()) runScan()
     }
 
     fun updateCveBase(
@@ -582,6 +609,8 @@ fun ScannerScreen() {
                                     onCveDismiss = { cveUpdateResult = null },
                                     riskBannerDismissed = riskBannerDismissed,
                                     onRiskBannerDismiss = { riskBannerDismissed = true },
+                                    newNetworkBanner = newNetworkBanner,
+                                    onNewNetworkDismiss = { newNetworkBanner = false },
                                     portMode = portMode,
                                     onPortModeChange = { newMode ->
                                         portMode = newMode
@@ -650,6 +679,8 @@ private fun DeviceList(
     onCveDismiss: () -> Unit,
     riskBannerDismissed: Boolean,
     onRiskBannerDismiss: () -> Unit,
+    newNetworkBanner: Boolean,
+    onNewNetworkDismiss: () -> Unit,
     portMode: Int,
     onPortModeChange: (Int) -> Unit,
     boxStatus: String?,
@@ -691,6 +722,9 @@ private fun DeviceList(
         }
         if (newDevices.isNotEmpty()) {
             item(key = "new") { NewDevicesBanner(newDevices = newDevices, onClick = onNewDevicesClick) }
+        }
+        if (newNetworkBanner) {
+            item(key = "newnetwork") { NewNetworkBanner(onDismiss = onNewNetworkDismiss) }
         }
         if (maxRisk != null && riskCount > 0 && !riskBannerDismissed) {
             item(key = "risk") {
@@ -1038,6 +1072,38 @@ private fun NewDevicesBanner(newDevices: List<Device>, onClick: () -> Unit) {
     }
 }
 
+/** Bandeau « nouveau réseau détecté » (changement de passerelle). */
+@Composable
+private fun NewNetworkBanner(onDismiss: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "📡 Nouveau réseau détecté — rescan automatique",
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                fontWeight = FontWeight.Bold,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = onDismiss) {
+                Text(
+                    "Fermer",
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
+}
+
 /** Section « Vu par la box » : équipements des baux DHCP, en accordéon. */
 @Composable
 private fun BoxDevicesSection(
@@ -1045,6 +1111,11 @@ private fun BoxDevicesSection(
     devices: List<BoxClient.BoxDevice>,
     onAuthorize: () -> Unit
 ) {
+    val context = LocalContext.current
+    val gateway = remember { NetworkInfoProvider.readGateway() }
+    val prefs = remember { context.getSharedPreferences(BoxStore.PREFS, Context.MODE_PRIVATE) }
+    var boxName by remember { mutableStateOf(BoxStore.getBoxName(prefs, gateway)) }
+    var renaming by remember { mutableStateOf(false) }
     var expanded by remember { mutableStateOf(false) }
     Card(
         modifier = Modifier
@@ -1055,12 +1126,26 @@ private fun BoxDevicesSection(
     ) {
         Column(Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "Vu par la box (${devices.size})",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(Modifier.weight(1f))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "Vu par la box (${devices.size})",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    boxName?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+                if (boxName != null) {
+                    IconButton(onClick = { renaming = true }) {
+                        Text("✏️", style = MaterialTheme.typography.titleSmall)
+                    }
+                }
                 Text(if (expanded) "▲" else "▼", style = MaterialTheme.typography.labelMedium)
             }
             if (status.isNotBlank()) {
@@ -1127,6 +1212,36 @@ private fun BoxDevicesSection(
                 }
             }
         }
+    }
+
+    if (renaming) {
+        var draft by remember { mutableStateOf(boxName ?: "") }
+        AlertDialog(
+            onDismissRequest = { renaming = false },
+            title = { Text("Renommer la box") },
+            text = {
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = { draft = it },
+                    singleLine = true,
+                    label = { Text("Nom de la box") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val name = draft.trim()
+                    if (name.isNotEmpty()) {
+                        BoxStore.setBoxName(prefs, gateway, name)
+                        boxName = name
+                    }
+                    renaming = false
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { renaming = false }) { Text("Annuler") }
+            }
+        )
     }
 }
 
@@ -1685,6 +1800,16 @@ private fun DeviceDetailScreen(
                             )
                         }
                     }
+                }
+            }
+
+            // --- SNMP ---
+            if (!device.snmpName.isNullOrBlank() || !device.snmpDescr.isNullOrBlank()) {
+                SectionCard("SNMP") {
+                    device.snmpName?.takeIf { it.isNotBlank() }?.let { InfoRow("System Name", it) }
+                    device.snmpDescr?.takeIf { it.isNotBlank() }?.let { InfoRow("Description", it) }
+                    device.snmpLocation?.takeIf { it.isNotBlank() }?.let { InfoRow("Location", it) }
+                    device.snmpUptime?.let { InfoRow("Uptime", SnmpScanner.formatUptime(it)) }
                 }
             }
 

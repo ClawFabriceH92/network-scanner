@@ -1,7 +1,11 @@
 package com.fabrice.network.scanner.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,12 +18,16 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,6 +43,7 @@ import com.fabrice.network.scanner.NetworkInfoProvider
 import com.fabrice.network.scanner.WifiQuality
 import com.fabrice.network.scanner.ui.theme.LocalMonoTextStyle
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Écran « Réseau » : infos du réseau Wi-Fi (SSID, BSSID, passerelle, DNS,
@@ -44,6 +53,8 @@ import kotlinx.coroutines.delay
 @Composable
 fun NetworkScreen() {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
     var info by remember { mutableStateOf(NetworkInfoProvider.read(context)) }
     var rssi by remember { mutableStateOf(WifiQuality.currentRssi(context)) }
     var publicIp by remember { mutableStateOf<String?>(null) }
@@ -71,12 +82,13 @@ fun NetworkScreen() {
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 12.dp)
-    ) {
+    Box(Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 12.dp)
+        ) {
         Spacer(Modifier.height(4.dp))
 
         // --- Qualité Wi-Fi + test réseau (déplacé depuis l'onglet Périphériques) ---
@@ -101,7 +113,29 @@ fun NetworkScreen() {
                 InfoRow("BSSID", info.bssid.ifBlank { "non disponible" }, mono = true)
                 InfoRow("Réseau", info.networkAddress.ifBlank { "—" } + if (info.mask.isNotBlank()) " / ${info.mask}" else "", mono = true)
                 InfoRow("Passerelle", info.gateway.ifBlank { "inconnue" }, mono = true)
-                InfoRow("IP publique", publicIp ?: "…", mono = true)
+                Row(
+                    Modifier.padding(vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "IP publique :",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                    Text(
+                        publicIp ?: "…",
+                        style = LocalMonoTextStyle.current,
+                        fontWeight = FontWeight.Medium
+                    )
+                    publicIp?.let {
+                        TextButton(onClick = {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("ip", it))
+                            scope.launch { snackbar.showSnackbar("IP publique copiée") }
+                        }) { Text("📋 Copier") }
+                    }
+                }
                 InfoRow("DNS", info.dns.joinToString(", ").ifBlank { "inconnu" }, mono = true)
                 InfoRow("Bande", info.band.ifBlank { "—" })
                 InfoRow("Débit liaison", if (info.linkSpeedMbps > 0) "${info.linkSpeedMbps} Mbps" else "—")
@@ -149,6 +183,8 @@ fun NetworkScreen() {
                 }
             }
         }
+    }
+    SnackbarHost(hostState = snackbar, modifier = Modifier.align(Alignment.BottomCenter))
     }
 }
 
