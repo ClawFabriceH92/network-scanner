@@ -105,6 +105,14 @@ object NetworkInfoProvider {
         else -> ""
     }
 
+    /** Infos géographiques d'une IP (via ipinfo.io). */
+    data class GeoIpInfo(
+        val city: String = "",
+        val region: String = "",
+        val country: String = "",
+        val org: String = ""
+    )
+
     /** Récupère l'adresse IP publique (WAN) via une API. null si hors-ligne. */
     fun fetchPublicIp(timeoutMs: Int = 8_000): String? {
         val apis = listOf(
@@ -130,5 +138,42 @@ object NetworkInfoProvider {
             }
         }
         return null
+    }
+
+    /**
+     * Récupère les infos GeoIP d'une IP publique (ville, région, pays, FAI)
+     * via `https://ipinfo.io/<ip>/json` (pas de clé pour un usage léger).
+     * null si l'IP est vide ou si la requête échoue.
+     */
+    fun fetchGeoIp(ip: String, timeoutMs: Int = 4_000): GeoIpInfo? {
+        if (ip.isBlank()) return null
+        return try {
+            val conn = java.net.URL("https://ipinfo.io/$ip/json").openConnection() as java.net.HttpURLConnection
+            conn.connectTimeout = timeoutMs
+            conn.readTimeout = timeoutMs
+            conn.setRequestProperty("User-Agent", "NetworkScanner/1.0")
+            if (conn.responseCode != 200) {
+                conn.disconnect()
+                return null
+            }
+            val text = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            conn.disconnect()
+            parseGeoIp(text)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** Parse une réponse ipinfo.io JSON → GeoIpInfo, ou null si invalide. */
+    fun parseGeoIp(json: String): GeoIpInfo? {
+        return runCatching {
+            val o = org.json.JSONObject(json)
+            GeoIpInfo(
+                city = o.optString("city", ""),
+                region = o.optString("region", ""),
+                country = o.optString("country", ""),
+                org = o.optString("org", "")
+            )
+        }.getOrNull()
     }
 }

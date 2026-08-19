@@ -24,10 +24,11 @@ object VulnScanner {
         val label: String,       // Aucune / Faible / Modéré / Élevé / Critique
         val criticalCount: Int,
         val highCount: Int,
-        val kevCount: Int
+        val kevCount: Int,
+        val defaultCred: String? = null
     ) {
         val total: Int get() = cves.size
-        val isEmpty: Boolean get() = cves.isEmpty()
+        val isEmpty: Boolean get() = cves.isEmpty() && defaultCred == null
     }
 
     /** Poids sévérité pour le score. */
@@ -135,7 +136,7 @@ object VulnScanner {
      *   quand aucune version n'est détectée (on ne peut pas confirmer) —
      *   on les signale quand même avec flag kevOnly pour ne pas noyer.
      */
-    fun match(services: List<Service>, db: CveDatabase): DeviceVulns {
+    fun match(services: List<Service>, db: CveDatabase, defaultCred: String? = null): DeviceVulns {
         val hits = LinkedHashMap<String, CveEntry>()
         var kevOnlyProductLevel = 0
 
@@ -169,6 +170,8 @@ object VulnScanner {
         }
         // Bonus KEV : une vulnérabilité activement exploitée monte le score
         score += kevCount * 10
+        // Credential par défaut trouvée = accès critique (+50)
+        if (defaultCred != null) score += 50
         score = score.coerceAtMost(100)
 
         return DeviceVulns(
@@ -178,7 +181,8 @@ object VulnScanner {
             label = labelForScore(score),
             criticalCount = critical,
             highCount = high,
-            kevCount = kevCount
+            kevCount = kevCount,
+            defaultCred = defaultCred
         )
     }
 

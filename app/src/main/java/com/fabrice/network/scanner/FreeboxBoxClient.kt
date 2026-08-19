@@ -178,4 +178,48 @@ class FreeboxBoxClient(private val context: Context) : BoxClient {
         mac.init(SecretKeySpec(key.toByteArray(), "HmacSHA1"))
         return mac.doFinal(data.toByteArray()).joinToString("") { "%02x".format(it) }
     }
+
+    /**
+     * Coupe/restaure l'accès d'un périphérique (blocage légal via l'API box,
+     * équivalent du « bloquer » de Freebox Companion — PAS de deauth).
+     *
+     * ⚠️ Endpoint à confirmer sur box réelle : on cherche l'id de l'équipement
+     * dans `/lan/browser/pub/` (par MAC dans l2ident) puis `PUT /lan/browser/pub/<id>`
+     * avec `{"blocked": true|false}`. Si la box n'expose pas ce champ, la méthode
+     * retourne false (à tester physiquement). Le blocage n'est pas toujours
+     * persistant (reboot de la box = retour à la normale).
+     */
+    override fun blockDevice(mac: String): Boolean = setBlocked(mac, true)
+
+    override fun unblockDevice(mac: String): Boolean = setBlocked(mac, false)
+
+    private fun setBlocked(mac: String, blocked: Boolean): Boolean {
+        return try {
+            val normalized = mac.replace("-", ":").lowercase()
+            val session = sessionToken() ?: return false
+            val d = http("GET", "/lan/browser/pub/", token = session) ?: return false
+            val arr = d.optJSONArray("result") ?: return false
+            var id = ""
+            for (i in 0 until arr.length()) {
+                val e = arr.getJSONObject(i)
+                var m = ""
+                e.optJSONArray("l2ident")?.let { ids ->
+                    for (j in 0 until ids.length()) {
+                        val v = ids.getJSONObject(j).optString("id", "")
+                        if (v.contains(":")) { m = v; break }
+                    }
+                }
+                if (m.lowercase() == normalized) {
+                    id = e.optString("id", "")
+                    break
+                }
+            }
+            if (id.isBlank()) return false
+            val body = JSONObject().put("blocked", blocked)
+            val r = http("PUT", "/lan/browser/pub/$id", body, token = session)
+            r?.optBoolean("success", false) == true
+        } catch (e: Exception) {
+            false
+        }
+    }
 }

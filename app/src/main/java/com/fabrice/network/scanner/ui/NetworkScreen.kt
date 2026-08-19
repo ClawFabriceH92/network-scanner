@@ -58,14 +58,21 @@ fun NetworkScreen() {
     var info by remember { mutableStateOf(NetworkInfoProvider.read(context)) }
     var rssi by remember { mutableStateOf(WifiQuality.currentRssi(context)) }
     var publicIp by remember { mutableStateOf<String?>(null) }
+    var geoInfo by remember { mutableStateOf<NetworkInfoProvider.GeoIpInfo?>(null) }
     // Historique RSSI : (secondes, dBm) — 120 échantillons = 2 min
     val history = remember { mutableListOf<Pair<Long, Int>>() }
     val startTime = remember { System.currentTimeMillis() }
 
-    // Récupère l'IP publique (WAN) au chargement, hors thread UI
+    // Récupère l'IP publique (WAN) + GeoIP au chargement, hors thread UI
     LaunchedEffect(Unit) {
-        publicIp = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val ip = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             NetworkInfoProvider.fetchPublicIp()
+        }
+        publicIp = ip
+        if (ip != null) {
+            geoInfo = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                NetworkInfoProvider.fetchGeoIp(ip)
+            }
         }
     }
 
@@ -135,6 +142,10 @@ fun NetworkScreen() {
                             scope.launch { snackbar.showSnackbar("IP publique copiée") }
                         }) { Text("📋 Copier") }
                     }
+                }
+                geoInfo?.let { g ->
+                    InfoRow("Localisation", listOfNotNull(g.city, g.region, g.country).joinToString(", ").ifBlank { "—" })
+                    if (g.org.isNotBlank()) InfoRow("FAI", g.org)
                 }
                 InfoRow("DNS", info.dns.joinToString(", ").ifBlank { "inconnu" }, mono = true)
                 InfoRow("Bande", info.band.ifBlank { "—" })

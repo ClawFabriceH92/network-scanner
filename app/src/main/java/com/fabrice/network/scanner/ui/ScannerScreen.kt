@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.net.wifi.WifiManager
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -111,6 +112,11 @@ import com.fabrice.network.scanner.SnmpScanner
 import com.fabrice.network.scanner.UpdateChecker
 import com.fabrice.network.scanner.VulnScanner
 import com.fabrice.network.scanner.WakeOnLan
+import com.fabrice.network.scanner.DefaultCredsChecker
+import com.fabrice.network.scanner.NewDeviceNotifier
+import com.fabrice.network.scanner.NmapSignatures
+import com.fabrice.network.scanner.PresenceHistory
+import com.fabrice.network.scanner.PresenceHistoryStore
 import com.fabrice.network.scanner.ui.theme.LocalMonoTextStyle
 import com.fabrice.network.scanner.ui.theme.LocalScannerColors
 import com.fabrice.network.scanner.ui.theme.onColorFor
@@ -144,6 +150,7 @@ fun ScannerScreen() {
 
     val deviceStore = remember { DeviceStore(context) }
     val historyStore = remember { HistoryStore(context) }
+    val presenceStore = remember { PresenceHistoryStore(context) }
 
     var devices by remember { mutableStateOf<List<Device>>(emptyList()) }
     var scanning by remember { mutableStateOf(false) }
@@ -185,6 +192,7 @@ fun ScannerScreen() {
     // Équipements vus par la box (baux DHCP) — complète le scan direct
     var boxDevices by remember { mutableStateOf<List<BoxClient.BoxDevice>>(emptyList()) }
     var boxStatus by remember { mutableStateOf<String?>(null) } // null = pas de box, "" = ok
+    var blockedMacs by remember { mutableStateOf(setOf<String>()) } // MAC bloquées via la box
     // Écran : 0 = scan, 1 = aide, 2 = à propos, 3 = nouveaux appareils
     var screen by remember { mutableStateOf(0) }
     // Mode de scan de ports : 0 = standard (16), 1 = élargi (52) — persisté
@@ -228,6 +236,12 @@ fun ScannerScreen() {
         return true
     }
 
+    // Permission de notification (Android 13+) demandée au 1er scan si les
+    // alertes « nouveaux appareils » sont actives.
+    val notifPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { _ -> /* la notification est envoyée si accordée */ }
+
     fun runScan() {
         scope.launch {
             scanning = true
@@ -236,6 +250,15 @@ fun ScannerScreen() {
             progressTotal = 0
             newDevices = emptyList()
             newKeys = emptySet()
+            // Demande la permission de notification (Android 13+) si les alertes
+            // « nouveaux appareils » sont actives — demandé au 1er scan.
+            if (Build.VERSION.SDK_INT >= 33 &&
+                NewDeviceNotifier.isEnabled(context) &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED
+            ) {
+                notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
             val subnet = NetworkScanner.detectSubnet()
             if (subnet == null) {
                 // Feature 3 : erreur réseau claire avant de lancer un scan inutile
@@ -249,6 +272,15 @@ fun ScannerScreen() {
             val cveDb = CveDatabaseStore.load(context)
             cveDbVersion = cveDb.generated.ifBlank { null }
             cveStale = CveUpdateManager.isStale(cveDbVersion ?: "")
+            // Signatures Nmap + creds par défaut (assets, chargés avant le scan)
+            runCatching {
+                context.assets.open("nmap_signatures.json").bufferedReader()
+                    .use { NmapSignatures.load(it.readText()) }
+            }
+            runCatching {
+                context.assets.open("default_creds.json").bufferedReader()
+                    .use { DefaultCredsChecker.load(it.readText()) }
+            }
             // Cache persistant des fabricants résolus en ligne (par préfixe OUI).
             val vendorPrefs = context.getSharedPreferences("vendor_cache", Context.MODE_PRIVATE)
             val result = try {
@@ -277,13 +309,27 @@ fun ScannerScreen() {
                 if (fresh.isNotEmpty()) {
                     newDevices = fresh
                     newKeys = fresh.map { ScanHistory.identityKey(it) }.toSet()
+                    // ⚠️ Pas de notification au tout premier scan (historique vide
+                    // → tout serait « nouveau »). On ne notifie que si un
+                    // historique connu existe déjà.
+                    if (previous.isNotEmpty()) {
+                        NewDeviceNotifier.notify(context, fresh)
+                    }
                 }
                 historyStore.save(result)
+                // Historique de présence : enregistré APRÈS le scan (non-bloquant)
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        val registry = presenceStore.load()
+                        presenceStore.save(PresenceHistory.record(registry, result))
+                    }
+                }
             }
             // Scan de vulnérabilités : banner → produit/version → matching CVE
+            // (le champ defaultCred alimente le score : +50 si credential par défaut)
             vulnsByIp = result.associate { device ->
                 val services = VulnScanner.parseBanner(device.banner)
-                device.ip to VulnScanner.match(services, cveDb)
+                device.ip to VulnScanner.match(services, cveDb, device.defaultCred)
             }
             // Équipements vus par la box (baux DHCP) — complète le scan
             val box = BoxManager.detect(context)
@@ -304,6 +350,10 @@ fun ScannerScreen() {
                 boxStatus = null
             }
             devices = result
+            // Alerte push si une credential par défaut a été trouvée (même canal)
+            result.filter { it.defaultCred != null }.take(3).forEach { d ->
+                NewDeviceNotifier.notifyDefaultCred(context, d)
+            }
             ScanPersistence.save(context, result)
             scanSource = ""
             lastScanAge = null
@@ -417,6 +467,7 @@ fun ScannerScreen() {
             locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
         }
     }
+
     runBtScan = { ctx ->
         val missing = btPermissions.filter {
             ContextCompat.checkSelfPermission(ctx, it) != PackageManager.PERMISSION_GRANTED
@@ -539,6 +590,12 @@ fun ScannerScreen() {
                         label = { Text("Bluetooth") }
                     )
                     NavigationBarItem(
+                        selected = screen == 0 && selectedTab == 3,
+                        onClick = { screen = 0; selectedTab = 3 },
+                        icon = { Text("📶") },
+                        label = { Text("WiFi") }
+                    )
+                    NavigationBarItem(
                         selected = screen == 1,
                         onClick = { screen = 1 },
                         icon = { Icon(Icons.Filled.Info, contentDescription = null) },
@@ -579,6 +636,7 @@ fun ScannerScreen() {
                         error = btError,
                         onScan = { runBtScan(context) }
                     )
+                    3 -> WifiScreen()
                     else -> {
                         // Onglet Scanner (Périphériques)
                         if (scanning) {
@@ -669,6 +727,27 @@ fun ScannerScreen() {
                                             }
                                         }
                                     },
+                                    onToggleBlock = { device ->
+                                        scope.launch(Dispatchers.IO) {
+                                            val client = BoxManager.detect(context) ?: return@launch
+                                            val blocked = device.mac in blockedMacs
+                                            val ok = if (blocked) client.unblockDevice(device.mac)
+                                            else client.blockDevice(device.mac)
+                                            withContext(Dispatchers.Main) {
+                                                if (ok) {
+                                                    blockedMacs = if (blocked) blockedMacs - device.mac
+                                                    else blockedMacs + device.mac
+                                                    snackbar.showSnackbar(
+                                                        if (blocked) "✅ ${device.name.ifBlank { device.ip }} débloqué"
+                                                        else "⛔ ${device.name.ifBlank { device.ip }} bloqué — accès coupé"
+                                                    )
+                                                } else {
+                                                    snackbar.showSnackbar("Échec — box non accessible ou action refusée ?")
+                                                }
+                                            }
+                                        }
+                                    },
+                                    blockedMacs = blockedMacs,
                                     onDeviceClick = { selected = it },
                                     onToggleFavorite = { device ->
                                         val key = ScanHistory.identityKey(device)
@@ -725,6 +804,8 @@ private fun DeviceList(
     boxStatus: String?,
     boxDevices: List<BoxClient.BoxDevice>,
     onAuthorizeBox: () -> Unit,
+    onToggleBlock: (BoxClient.BoxDevice) -> Unit = {},
+    blockedMacs: Set<String> = emptySet(),
     onDeviceClick: (Device) -> Unit,
     onToggleFavorite: (Device) -> Unit
 ) {
@@ -805,7 +886,9 @@ private fun DeviceList(
                 BoxDevicesSection(
                     status = boxStatus ?: "",
                     devices = boxDevices,
-                    onAuthorize = onAuthorizeBox
+                    onAuthorize = onAuthorizeBox,
+                    onToggleBlock = onToggleBlock,
+                    blockedMacs = blockedMacs
                 )
             }
         }
@@ -1205,7 +1288,9 @@ private fun NewNetworkBanner(onDismiss: () -> Unit) {
 private fun BoxDevicesSection(
     status: String,
     devices: List<BoxClient.BoxDevice>,
-    onAuthorize: () -> Unit
+    onAuthorize: () -> Unit,
+    onToggleBlock: (BoxClient.BoxDevice) -> Unit = {},
+    blockedMacs: Set<String> = emptySet()
 ) {
     val context = LocalContext.current
     val gateway = remember { NetworkInfoProvider.readGateway() }
@@ -1213,6 +1298,7 @@ private fun BoxDevicesSection(
     var boxName by remember { mutableStateOf(BoxStore.getBoxName(prefs, gateway)) }
     var renaming by remember { mutableStateOf(false) }
     var expanded by remember { mutableStateOf(false) }
+    var confirmBlock by remember { mutableStateOf<BoxClient.BoxDevice?>(null) }
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -1296,6 +1382,12 @@ private fun BoxDevicesSection(
                                     color = MaterialTheme.colorScheme.primary
                                 )
                             }
+                            IconButton(onClick = { confirmBlock = d }) {
+                                Text(
+                                    if (d.mac in blockedMacs) "✅" else "⛔",
+                                    style = MaterialTheme.typography.titleSmall
+                                )
+                            }
                         }
                     }
                     if (devices.size > 10) {
@@ -1308,6 +1400,29 @@ private fun BoxDevicesSection(
                 }
             }
         }
+    }
+
+    confirmBlock?.let { target ->
+        val blocked = target.mac in blockedMacs
+        AlertDialog(
+            onDismissRequest = { confirmBlock = null },
+            title = { Text(if (blocked) "Débloquer ${target.name.ifBlank { target.ip }} ?" else "Bloquer ${target.name.ifBlank { target.ip }} ?") },
+            text = {
+                Text(
+                    if (blocked) "Le périphérique retrouvera l'accès réseau/Internet."
+                    else "Le périphérique perdra l'accès réseau/Internet. (Le blocage peut ne pas survivre au redémarrage de la box.)"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onToggleBlock(target)
+                    confirmBlock = null
+                }) { Text(if (blocked) "✅ Débloquer" else "⛔ Bloquer") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmBlock = null }) { Text("Annuler") }
+            }
+        )
     }
 
     if (renaming) {
@@ -1588,6 +1703,14 @@ private fun DeviceCard(
                         fg = MaterialTheme.colorScheme.surface
                     )
                 }
+                if (device.defaultCred != null) {
+                    Spacer(Modifier.height(2.dp))
+                    Pill(
+                        text = "🔑 Credential par défaut : ${device.defaultCred}",
+                        bg = semantic.riskCritical,
+                        fg = onColorFor(semantic.riskCritical)
+                    )
+                }
             }
             Column(horizontalAlignment = Alignment.End) {
                 IconButton(onClick = onToggleFavorite) {
@@ -1726,6 +1849,10 @@ private fun DeviceDetailScreen(
     val snackbar = remember { SnackbarHostState() }
     val clipboard = LocalClipboardManager.current
     val key = ScanHistory.identityKey(device)
+    val presenceTimestamps = remember(key) {
+        runCatching { PresenceHistoryStore(context).load()[key] ?: emptyList() }
+            .getOrDefault(emptyList())
+    }
     var customName by remember { mutableStateOf(store.customName(key)) }
     var isFav by remember { mutableStateOf(store.isFavorite(key)) }
     val wolAvailable = device.mac.isNotBlank()
@@ -1851,6 +1978,14 @@ private fun DeviceDetailScreen(
                 }
             }
 
+            // --- Présence (historique) ---
+            if (presenceTimestamps.isNotEmpty()) {
+                SectionCard("Présence") {
+                    InfoRow("Vu", PresenceHistory.lastSeen(presenceTimestamps))
+                    InfoRow("Apparitions", "${presenceTimestamps.size}")
+                }
+            }
+
             // --- UPnP ---
             device.upnp?.let { u ->
                 if (u.friendlyName.isNotBlank() || u.manufacturer.isNotBlank() ||
@@ -1906,6 +2041,31 @@ private fun DeviceDetailScreen(
                     device.snmpDescr?.takeIf { it.isNotBlank() }?.let { InfoRow("Description", it) }
                     device.snmpLocation?.takeIf { it.isNotBlank() }?.let { InfoRow("Location", it) }
                     device.snmpUptime?.let { InfoRow("Uptime", SnmpScanner.formatUptime(it)) }
+                }
+            }
+
+            // --- Credentials par défaut ---
+            device.defaultCred?.let { cred ->
+                SectionCard("🔑 Credentials par défaut") {
+                    Text(
+                        "Combo trouvé : $cred",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = LocalScannerColors.current.riskCritical
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    FilledTonalButton(onClick = {
+                        val scheme = if (443 in device.ports) "https" else "http"
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse("$scheme://${device.ip}"))
+                        )
+                    }) { Text("🔗 Ouvrir") }
+                    Text(
+                        "⚠️ Change immédiatement ce mot de passe.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
                 }
             }
 

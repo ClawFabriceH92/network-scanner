@@ -35,4 +35,15 @@ interface BoxClient {
 
     /** Le client peut-il être utilisé tel quel (box joignable + auth dispo) ? */
     fun isAvailable(): Boolean
+
+    /**
+     * Coupe l'accès réseau/Internet d'un périphérique (blocage légal via l'API
+     * box, équivalent « bloquer » de l'interface constructeur — PAS de deauth).
+     * Retourne false par défaut : les implémentations qui ne le supportent pas
+     * ne cassent pas les appels existants.
+     */
+    fun blockDevice(mac: String): Boolean = false
+
+    /** Rétablit l'accès d'un périphérique bloqué. */
+    fun unblockDevice(mac: String): Boolean = false
 }

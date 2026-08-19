@@ -14,7 +14,7 @@ object CsvExporter {
         vulnsByIp: Map<String, VulnScanner.DeviceVulns> = emptyMap()
     ): String = buildString {
         append('\uFEFF') // BOM UTF-8
-        appendLine("IP;MAC;Fabricant;Nom réseau;Produit;Modèle;SNMP Nom;SNMP Description;Système;Statut;Vulnérabilités;Score")
+        appendLine("IP;MAC;Fabricant;Nom réseau;Produit;Modèle;SNMP Nom;SNMP Description;Système;Statut;Vulnérabilités;Score;Credential défaut")
         devices.forEach { d ->
             append(csv(d.ip)); append(';')
             append(csv(d.mac)); append(';')
@@ -34,6 +34,8 @@ object CsvExporter {
                 append(csv("")); append(';')
                 append(csv(""))
             }
+            append(';')
+            append(csv(d.defaultCred ?: ""))
             appendLine()
         }
     }

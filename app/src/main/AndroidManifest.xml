@@ -13,6 +13,10 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <!-- Auto-update : installer l'APK téléchargé (demandé à l'utilisateur) -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Alertes « nouveaux appareils » (notification, Android 13+ : runtime) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Scan Wi-Fi (feature v1.7.0) : lecture des résultats de scan -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
 

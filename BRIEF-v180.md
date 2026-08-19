@@ -156,6 +156,26 @@ But : quand Fabrice se promène, voir s'il se RAPPROCHE ou s'ÉLOIGNE de la box.
   - Bouton « Tester le WoL » : fait le test complet (magic packet + attente + re-ping) — résultat stocké dans DeviceStore (key `wol_<mac>`) pour ne pas re-tester.
 - Persistance : résultat du test WoL dans SharedPreferences (DeviceStore existant — clé `wol_<mac>` : true/false).
 
+## FEATURE 7 — Liste des partages SMB non vides — demande Fabrice
+
+But : pour chaque appareil avec port 445 (SMB) ouvert, lister les DOSSIERS partagés NON VIDES (accès invité).
+
+### SmbShareScanner (étendre l'existant, v1.1.0)
+- L'existant teste les partages par défaut en guest et retourne les noms accessibles. Étendre :
+  - Pour chaque partage accessible : `share.list("")` (déjà possible avec smbj 0.13.0) → compter les entrées → `SmbShareEntry(shareName, itemCount, firstItems: List<String>)` (max 5 premiers noms, items = fichiers OU dossiers).
+  - `nonEmptyShares(host): List<SmbShareEntry>` — ne garde que les partages avec itemCount > 0.
+- `SmbShareEntry` pur + testable (pas d'appel réseau dans les tests : helper `summarize(shareName, entries: List<String>)` pur → entry).
+- ⚠️ Guest mode seulement (pas de credentials) — les partages protégés sont ignorés silencieusement. Ne pas bloquer le scan (runCatching + timeout).
+
+### UI
+- Dans la fiche détail d'un appareil (section « Partages SMB » existante) : afficher pour chaque partage NON VIDE :
+  - `📁 <shareName> — <N> éléments` + sous-liste des 5 premiers (`fichier.txt`, `Documents/`…).
+  - Les partages vides ou inaccessibles ne sont PAS listés.
+- Option : dans la fiche, un bouton « 🔁 Actualiser les partages ».
+
+### Tests JUnit
+- summarize (0 entrée → non listé, 3 entrées → count + firstItems tronqués à 5), tri par itemCount DESC.
+
 ## LIVRABLES
 - Code compilé : `./gradlew testDebugUnitTest --rerun-tasks` vert (compter les tests, 0 failures), `assembleDebug` OK.
 - Bump : versionCode 28, versionName "1.8.0".

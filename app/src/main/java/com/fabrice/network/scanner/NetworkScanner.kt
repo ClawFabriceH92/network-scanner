@@ -35,7 +35,9 @@ data class Device(
     val snmpDescr: String? = null,
     val snmpName: String? = null,
     val snmpLocation: String? = null,
-    val snmpUptime: Long? = null
+    val snmpUptime: Long? = null,
+    val defaultCred: String? = null,
+    val credTested: Boolean = false
 )
 
 /** Résultat d'un ping : vivant ? + TTL de la réponse (pour l'OS) + latence. */
@@ -250,7 +252,7 @@ object NetworkScanner {
 
         val localIp = ip
         val gatewayIp = NetworkInfoProvider.readGateway()
-        allIps.map { host ->
+        val baseDevices = allIps.map { host ->
             var mac = arp[host] ?: ""
             var hostname = reverseDns(host)
             // Hôte « vivant » : a répondu au ping OU à une découverte multicast
@@ -308,7 +310,8 @@ object NetworkScanner {
             val md = mdnsByIp[host]
             val wsd = wsdByIp[host]
             val fp = ServiceFingerprint.identify(banner)
-            val product = firstNonBlank(fp?.product, md?.model, upnp?.modelName).orEmpty()
+            val nmap = NmapSignatures.identify(listOf(banner))
+            val product = firstNonBlank(fp?.product, nmap?.displayName(), md?.model, upnp?.modelName).orEmpty()
             val model = firstNonBlank(md?.model, upnp?.modelName).orEmpty()
             if (hostname.isBlank()) {
                 hostname = firstNonBlank(md?.name, upnp?.friendlyName).orEmpty()
@@ -351,6 +354,32 @@ object NetworkScanner {
             compareByDescending<Device> { it.isSelf }
                 .thenBy { it.ip }
         )
+
+        // --- Feature 7 : test des mots de passe par défaut (services web) ---
+        // Après le scan, en parallèle, pour chaque appareil vivant avec un port
+        // web ouvert. Non-bloquant : runCatching + Dispatchers.IO.
+        val webDevices = baseDevices.filter { it.alive && DefaultCredsChecker.webPort(it) != null }
+        val credsByIp: Map<String, String?> = if (webDevices.isEmpty()) emptyMap() else {
+            coroutineScope {
+                webDevices.map { d ->
+                    async(Dispatchers.IO) {
+                        val found = runCatching {
+                            DefaultCredsChecker.checkDevice(d) { ip, port, u, p ->
+                                DefaultCredsChecker.basicAuthStatus(ip, port, u, p)
+                            }
+                        }.getOrNull()
+                        d.ip to found
+                    }
+                }.associate { it.await() }
+            }
+        }
+        baseDevices.map { d ->
+            when {
+                d.ip in credsByIp -> d.copy(defaultCred = credsByIp[d.ip], credTested = true)
+                d.alive && DefaultCredsChecker.webPort(d) != null -> d.copy(credTested = true)
+                else -> d
+            }
+        }
     }
 
     /**
