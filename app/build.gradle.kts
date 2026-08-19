@@ -68,8 +68,8 @@ android {
         applicationId = "com.fabrice.network.scanner"
         minSdk = 26
         targetSdk = 35
-        versionCode = 28
-        versionName = "1.8.0"
+        versionCode = 29
+        versionName = "1.9.0"
     }
 
     signingConfigs {
@@ -128,6 +128,10 @@ dependencies {
     // Client SMB (partages réseau) — pure Java, compatible Android
     implementation("com.hierynomus:smbj:0.13.0")
     implementation("org.slf4j:slf4j-nop:2.0.13")
+    // Surveillance continue (v1.9.0) : scan planifié en arrière-plan
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
+    // Verrouillage biométrique (v1.9.0) : BiometricPrompt androidx
+    implementation("androidx.biometric:biometric:1.1.0")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")

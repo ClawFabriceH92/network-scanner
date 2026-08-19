@@ -1,5 +1,7 @@
 package com.fabrice.network.scanner.ui
 
+import android.content.Context
+import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,14 +13,19 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -26,15 +33,24 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
+import com.fabrice.network.scanner.AppLock
+import com.fabrice.network.scanner.AppLog
 import com.fabrice.network.scanner.BuildConfig
 import com.fabrice.network.scanner.CveDatabaseStore
 import com.fabrice.network.scanner.CveUpdateManager
 import com.fabrice.network.scanner.NewDeviceNotifier
+import com.fabrice.network.scanner.SurveillanceScheduler
+import com.fabrice.network.scanner.TechOptions
 import com.fabrice.network.scanner.UpdateChecker
 import com.fabrice.network.scanner.ui.theme.LocalMonoTextStyle
+import java.io.File
 
 /** Écran d'aide : explication du scan, du score, des limites. */
 @Composable
@@ -146,6 +162,12 @@ fun AboutScreen(
             )
         }
         Spacer(Modifier.height(4.dp))
+        LockSection()
+        Spacer(Modifier.height(4.dp))
+        SurveillanceSection()
+        Spacer(Modifier.height(4.dp))
+        TechOptionsSection()
+        Spacer(Modifier.height(4.dp))
         Text("Mise à jour", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
         UpdateSection(
             updateInfo = updateInfo,
@@ -156,6 +178,7 @@ fun AboutScreen(
             onDownloadUpdate = onDownloadUpdate
         )
         Spacer(Modifier.height(4.dp))
+        SupportSection()
         Text("Sources des données", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
         HelpCard("NVD (NIST)") {
             "National Vulnerability Database — descriptif et gravité (CVSS) de toutes les CVE."
@@ -273,4 +296,231 @@ private fun InfoCard(label: String, value: String) {
             )
         }
     }
+}
+
+/** Réglage « Verrouillage de l'app » (PIN 4 chiffres ou empreinte). */
+@Composable
+private fun LockSection() {
+    val context = LocalContext.current
+    var lockEnabled by remember { mutableStateOf(AppLock.isEnabled(context)) }
+    var showSetup by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Verrouillage de l'app", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                "PIN à 4 chiffres ou empreinte digitale demandé au lancement.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(
+            checked = lockEnabled,
+            onCheckedChange = { enable ->
+                if (enable) showSetup = true
+                else {
+                    AppLock.disable(context)
+                    lockEnabled = false
+                }
+            }
+        )
+    }
+    if (lockEnabled) {
+        TextButton(onClick = { showSetup = true }) { Text("Changer le PIN") }
+    }
+    if (showSetup) {
+        PinSetupDialog(
+            onDismiss = { showSetup = false },
+            onConfirm = { pin ->
+                AppLock.setPin(context, pin)
+                lockEnabled = true
+                showSetup = false
+            }
+        )
+    }
+}
+
+/** Dialogue de configuration du PIN (4 chiffres, jamais stocké en clair). */
+@Composable
+private fun PinSetupDialog(onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+    var pin by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Configurer le PIN") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = pin,
+                    onValueChange = { pin = it.filter(Char::isDigit).take(4) },
+                    label = { Text("PIN (4 chiffres)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                error?.let {
+                    Text(
+                        it,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                if (pin.length != 4) error = "Le PIN doit contenir 4 chiffres."
+                else onConfirm(pin)
+            }) { Text("OK") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Annuler") }
+        }
+    )
+}
+
+/** Réglage « Surveillance continue » (scan planifié, OFF par défaut). */
+@Composable
+private fun SurveillanceSection() {
+    val context = LocalContext.current
+    var enabled by remember { mutableStateOf(SurveillanceScheduler.isEnabled(context)) }
+    var interval by remember { mutableStateOf(SurveillanceScheduler.intervalHours(context)) }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Surveillance continue", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                "Scan périodique du réseau en arrière-plan.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(
+            checked = enabled,
+            onCheckedChange = { e ->
+                SurveillanceScheduler.setEnabled(context, e)
+                enabled = e
+            }
+        )
+    }
+    if (enabled) {
+        Text(
+            "⚠️ Cette option consomme de la batterie — scans en arrière-plan.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error
+        )
+        Spacer(Modifier.height(4.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SurveillanceScheduler.INTERVALS_HOURS.forEach { h ->
+                FilterChip(
+                    selected = interval == h,
+                    onClick = {
+                        SurveillanceScheduler.setInterval(context, h)
+                        interval = h
+                    },
+                    label = { Text("${h} h") }
+                )
+            }
+        }
+    }
+}
+
+/** Réglage « Options techniques » (scan rapide, économie, accessibilité). */
+@Composable
+private fun TechOptionsSection() {
+    val context = LocalContext.current
+    var scanFast by remember { mutableStateOf(TechOptions.scanFast(context)) }
+    var economy by remember { mutableStateOf(TechOptions.scanEconomy(context)) }
+    var large by remember { mutableStateOf(TechOptions.largeText(context)) }
+
+    Text(
+        "⚙️ Options techniques",
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.Bold
+    )
+    ToggleRow(
+        title = "Scan rapide (ARP-first)",
+        desc = "Ordre optimisé : ARP + découvertes d'abord, ping en parallèle.",
+        checked = scanFast,
+        onChange = { TechOptions.setScanFast(context, it); scanFast = it }
+    )
+    ToggleRow(
+        title = "Consommation réduite",
+        desc = "Réserve SNMP, credentials et partages SMB à l'analyse complète.",
+        checked = economy,
+        onChange = { TechOptions.setScanEconomy(context, it); economy = it }
+    )
+    ToggleRow(
+        title = "Accessibilité (grands textes)",
+        desc = "Augmente la taille des textes et les contrastes.",
+        checked = large,
+        onChange = { TechOptions.setLargeText(context, it); large = it }
+    )
+}
+
+/** Ligne de toggle avec titre + description courte. */
+@Composable
+private fun ToggleRow(title: String, desc: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                desc,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+/** Section « Support » : copier / partager les logs de diagnostic. */
+@Composable
+private fun SupportSection() {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    Text(
+        "🔧 Support",
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.Bold
+    )
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(onClick = { clipboard.setText(AnnotatedString(AppLog.dump())) }) {
+            Text("📋 Copier les logs")
+        }
+        Button(onClick = { shareLogs(context) }) {
+            Text("📤 Partager les logs")
+        }
+    }
+    Text(
+        "Les logs sont conservés en mémoire (500 dernières lignes) et servent au diagnostic.",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+}
+
+/** Écrit le dump des logs dans un fichier texte et ouvre le partage (FileProvider). */
+private fun shareLogs(context: Context) {
+    val dir = File(context.filesDir, "exports").apply { mkdirs() }
+    val file = File(dir, "logs_network_scanner_v${BuildConfig.VERSION_NAME}.txt")
+    file.writeText(AppLog.dump())
+    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(intent, "Partager les logs"))
 }

@@ -83,6 +83,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import com.fabrice.network.scanner.AppLog
 import com.fabrice.network.scanner.BluetoothScanner
 import com.fabrice.network.scanner.BoxClient
 import com.fabrice.network.scanner.BoxManager
@@ -109,6 +110,7 @@ import com.fabrice.network.scanner.ScanPersistence
 import com.fabrice.network.scanner.ServiceFingerprint
 import com.fabrice.network.scanner.SmbShareScanner
 import com.fabrice.network.scanner.SnmpScanner
+import com.fabrice.network.scanner.TechOptions
 import com.fabrice.network.scanner.UpdateChecker
 import com.fabrice.network.scanner.VulnScanner
 import com.fabrice.network.scanner.WakeOnLan
@@ -283,6 +285,7 @@ fun ScannerScreen() {
             }
             // Cache persistant des fabricants résolus en ligne (par préfixe OUI).
             val vendorPrefs = context.getSharedPreferences("vendor_cache", Context.MODE_PRIVATE)
+            AppLog.i("Scan", "Démarrage du scan réseau (fast=${TechOptions.scanFast(context)}, economy=${TechOptions.scanEconomy(context)})")
             val result = try {
                 // Le multicast lock est requis pour le SSDP (239.255.255.250)
                 val portsToScan = if (portMode == 1) PortScanner.ALL_PORTS.map { it.first }
@@ -292,7 +295,9 @@ fun ScannerScreen() {
                         oui,
                         scanPorts = true,
                         prefs = vendorPrefs,
-                        portsToScan = portsToScan
+                        portsToScan = portsToScan,
+                        scanFast = TechOptions.scanFast(context),
+                        scanEconomy = TechOptions.scanEconomy(context)
                     ) { done, total ->
                         progress = done
                         progressTotal = total
@@ -300,8 +305,10 @@ fun ScannerScreen() {
                 }
             } catch (e: Exception) {
                 error = e.message ?: "Erreur inconnue"
+                AppLog.e("Scan", "Échec du scan : ${e.message}")
                 emptyList()
             }
+            AppLog.i("Scan", "Scan terminé : ${result.size} appareil(s)")
             // Détection des nouveaux appareils par rapport à l'historique connu
             if (result.isNotEmpty()) {
                 val previous = historyStore.load()
@@ -596,6 +603,12 @@ fun ScannerScreen() {
                         label = { Text("WiFi") }
                     )
                     NavigationBarItem(
+                        selected = screen == 0 && selectedTab == 4,
+                        onClick = { screen = 0; selectedTab = 4 },
+                        icon = { Text("📱") },
+                        label = { Text("NFC") }
+                    )
+                    NavigationBarItem(
                         selected = screen == 1,
                         onClick = { screen = 1 },
                         icon = { Icon(Icons.Filled.Info, contentDescription = null) },
@@ -637,6 +650,7 @@ fun ScannerScreen() {
                         onScan = { runBtScan(context) }
                     )
                     3 -> WifiScreen()
+                    4 -> NfcScreen()
                     else -> {
                         // Onglet Scanner (Périphériques)
                         if (scanning) {
@@ -2387,11 +2401,13 @@ private fun exportPdf(
 ) {
     val subnet = NetworkScanner.detectSubnet()
     val cidr = if (subnet != null) "${subnet.first}/${subnet.second}" else ""
+    val ssid = runCatching { NetworkInfoProvider.read(context).ssid }.getOrDefault("")
     val data = PdfAuditReport.buildData(
         devices = devices,
         vulnsByIp = vulnsByIp,
         selfIp = selfIp ?: "—",
-        networkCidr = cidr
+        networkCidr = cidr,
+        ssid = ssid
     )
     val uri = PdfAuditReport.generateAndShareUri(context, data)
     val intent = Intent(Intent.ACTION_SEND).apply {

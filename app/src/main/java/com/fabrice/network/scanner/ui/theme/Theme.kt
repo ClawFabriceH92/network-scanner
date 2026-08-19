@@ -9,6 +9,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
+import com.fabrice.network.scanner.TechOptions
 
 /**
  * Couleurs sémantiques (statut / risque) accessibles partout via
@@ -43,7 +46,15 @@ fun NetworkScannerTheme(
     }
     val semantic = if (darkTheme) darkSemanticColors(colorScheme) else lightSemanticColors(colorScheme)
 
+    // Accessibilité (toggle `a11y_large`) : augmente l'échelle de police globale.
+    val appContext = LocalContext.current
+    val density = LocalDensity.current
+    val scaledDensity = if (TechOptions.largeText(appContext)) {
+        Density(density.density, fontScale = density.fontScale * 1.25f)
+    } else density
+
     CompositionLocalProvider(
+        LocalDensity provides scaledDensity,
         LocalScannerColors provides semantic,
         LocalMonoTextStyle provides TechnicalMono
     ) {

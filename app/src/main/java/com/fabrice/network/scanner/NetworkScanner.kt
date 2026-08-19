@@ -184,6 +184,8 @@ object NetworkScanner {
         scanPorts: Boolean = true,
         prefs: SharedPreferences? = null,
         portsToScan: List<Int> = PortScanner.COMMON_PORTS.map { it.first },
+        scanFast: Boolean = true,
+        scanEconomy: Boolean = false,
         onProgress: (done: Int, total: Int) -> Unit
     ): List<Device> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         val subnet = detectSubnet() ?: return@withContext emptyList()
@@ -194,32 +196,40 @@ object NetworkScanner {
         val alive = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
         val ttlMap = java.util.concurrent.ConcurrentHashMap<String, Int>()
         val latencyMap = java.util.concurrent.ConcurrentHashMap<String, Int>()
-        val executor = Executors.newFixedThreadPool(64)
-        try {
-            hosts.forEachIndexed { index, host ->
-                executor.execute {
-                    val r = pingHost(host)
-                    if (r.alive) {
-                        alive.add(host)
-                        if (r.ttl != null) ttlMap[host] = r.ttl
-                        if (r.latencyMs != null) latencyMap[host] = r.latencyMs
-                    }
-                    if (index % 64 == 0 || index == hosts.size - 1) {
-                        onProgress(alive.size, hosts.size)
+        val broadcastIp = broadcastAddress(ip, prefix)
+
+        // Option « scan rapide » (scanFast, défaut ON) : lecture ANTICIPÉE de
+        // l'ARP (les échanges récents sont déjà dans la table avant le ping) et
+        // découvertes multicast lancées EN PARALLÈLE du ping. Optimisation
+        // d'ordre seulement — la couverture finale est identique (mêmes lectures).
+        val earlyArp = if (scanFast) readArp() else emptyMap<String, String>()
+
+        fun pingSweep() {
+            val executor = Executors.newFixedThreadPool(64)
+            try {
+                hosts.forEachIndexed { index, host ->
+                    executor.execute {
+                        val r = pingHost(host)
+                        if (r.alive) {
+                            alive.add(host)
+                            if (r.ttl != null) ttlMap[host] = r.ttl
+                            if (r.latencyMs != null) latencyMap[host] = r.latencyMs
+                        }
+                        if (index % 64 == 0 || index == hosts.size - 1) {
+                            onProgress(alive.size, hosts.size)
+                        }
                     }
                 }
+                executor.shutdown()
+                executor.awaitTermination(120, TimeUnit.SECONDS)
+            } finally {
+                if (!executor.isShutdown) executor.shutdownNow()
             }
-            executor.shutdown()
-            executor.awaitTermination(120, TimeUnit.SECONDS)
-        } finally {
-            if (!executor.isShutdown) executor.shutdownNow()
         }
 
         // Découverte multicast (UPnP/SSDP + mDNS + WS-Discovery + NetBIOS
-        // broadcast) en parallèle : salves simultanées, réponses par IP source.
-        // Le broadcast NetBIOS trouve les PC Windows qui filtrent le ping et
-        // n'ont ni mDNS ni WSD actifs — leur IP n'était connue nulle part.
-        val broadcastIp = broadcastAddress(ip, prefix)
+        // broadcast) : le broadcast NetBIOS trouve les PC Windows qui filtrent
+        // le ping et n'ont ni mDNS ni WSD actifs — leur IP n'était connue nulle part.
         val upnpByIp: Map<String, UpnpProbe.UpnpInfo>
         val mdnsByIp: Map<String, MdnsResolver.MdnsInfo>
         val wsdByIp: Map<String, WsdResolver.WsdInfo>
@@ -229,23 +239,42 @@ object NetworkScanner {
             val mdns = async(Dispatchers.IO) { MdnsResolver.discover() }
             val wsd = async(Dispatchers.IO) { WsdResolver.discover() }
             val nbns = async(Dispatchers.IO) { NbnsResolver.discover(broadcastIp) }
+            if (scanFast) {
+                // Multicast déjà lancé → ping en parallèle.
+                pingSweep()
+            }
             upnpByIp = upnp.await()
             mdnsByIp = mdns.await()
             wsdByIp = wsd.await()
             nbnsByIp = nbns.await()
+            if (!scanFast) {
+                // Ordre historique : découvertes multicast d'abord, ping ensuite.
+                pingSweep()
+            }
         }
 
         // Fusion ping + table ARP — TRIPLE lecture espacée : la table ARP
         // Android ne contient que les échanges récents, et un appareil qui
         // filtre ICMP n'apparaît qu'après un échange ARP. Trois lectures à
-        // ~700 ms captent plus de MAC que deux (périphériques cachés).
-        val arp = mergeArp(mergeArp(readArp(), run {
-            kotlinx.coroutines.delay(700)
-            readArp()
-        }), run {
-            kotlinx.coroutines.delay(700)
-            readArp()
-        })
+        // ~700 ms captent plus de MAC que deux (périphériques cachés). En scan
+        // rapide, la lecture anticipée compte pour la première.
+        val arp = if (scanFast) {
+            mergeArp(mergeArp(earlyArp, run {
+                kotlinx.coroutines.delay(700)
+                readArp()
+            }), run {
+                kotlinx.coroutines.delay(700)
+                readArp()
+            })
+        } else {
+            mergeArp(mergeArp(readArp(), run {
+                kotlinx.coroutines.delay(700)
+                readArp()
+            }), run {
+                kotlinx.coroutines.delay(700)
+                readArp()
+            })
+        }
         val allIps = (alive + arp.keys + mdnsByIp.keys + wsdByIp.keys + upnpByIp.keys + nbnsByIp.keys).toSortedSet()
 
         // Cache en mémoire des fabricants résolus en ligne : évite d'interroger
@@ -290,15 +319,16 @@ object NetworkScanner {
             val banner = if (responded) grabService(host, ports) else ""
             val os = OsFingerprint.guess(ttlMap[host], ports, hostname, banner.ifBlank { null })
             // Partages SMB (dossiers partagés, y compris cachés $) — seulement si
-            // le port 445 est ouvert, jamais bloquant (runCatching).
-            val smbShares = if (responded && 445 in ports) {
+            // le port 445 est ouvert, jamais bloquant (runCatching). Économie
+            // d'énergie (scanEconomy) : reporté à l'analyse complète manuelle.
+            val smbShares = if (responded && 445 in ports && !scanEconomy) {
                 runCatching { SmbShareScanner.scanShares(host, timeoutMs = 1_500) }
                     .getOrDefault(emptyList())
             } else emptyList()
             // SNMPv1 (sysDescr/sysName/sysLocation/uptime) — seulement si le port
             // 161 est ouvert (détecté par le scan de ports élargi). runCatching +
-            // timeout court, jamais bloquant pour le reste du scan.
-            val snmp = if (responded && 161 in ports) {
+            // timeout court, jamais bloquant. Économie d'énergie : reporté.
+            val snmp = if (responded && 161 in ports && !scanEconomy) {
                 runCatching { SnmpScanner.probeBlocking(host) }.getOrNull()
             } else null
             // Infos UPnP éventuelles (friendlyName, fabricant, modèle…)
@@ -359,8 +389,10 @@ object NetworkScanner {
 
         // --- Feature 7 : test des mots de passe par défaut (services web) ---
         // Après le scan, en parallèle, pour chaque appareil vivant avec un port
-        // web ouvert. Non-bloquant : runCatching + Dispatchers.IO.
-        val webDevices = baseDevices.filter { it.alive && DefaultCredsChecker.webPort(it) != null }
+        // web ouvert. Non-bloquant : runCatching + Dispatchers.IO. Économie
+        // d'énergie (scanEconomy) : reporté à l'analyse complète manuelle.
+        val webDevices = if (scanEconomy) emptyList()
+        else baseDevices.filter { it.alive && DefaultCredsChecker.webPort(it) != null }
         val credsByIp: Map<String, String?> = if (webDevices.isEmpty()) emptyMap() else {
             coroutineScope {
                 webDevices.map { d ->

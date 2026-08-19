@@ -1,5 +1,6 @@
 package com.fabrice.network.scanner.ui
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,9 +28,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.fabrice.network.scanner.SpeedHistoryStore
 import com.fabrice.network.scanner.SpeedTest
 import com.fabrice.network.scanner.WifiQuality
 import com.fabrice.network.scanner.ui.theme.LocalMonoTextStyle
@@ -50,6 +56,7 @@ fun NetworkPanel() {
     var testing by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<SpeedTest.Result?>(null) }
     var testError by remember { mutableStateOf(false) }
+    var historyTick by remember { mutableStateOf(0) }
 
     // Rafraîchit le RSSI toutes les 2 s — la barre bouge quand on se déplace
     LaunchedEffect(Unit) {
@@ -70,6 +77,18 @@ fun NetworkPanel() {
             }
             result = r
             testError = r == null || (r.downloadMbps <= 0 && r.uploadMbps <= 0 && r.latencyMs <= 0)
+            if (r != null && !testError) {
+                // Historique des débits (v1.9.0) : enregistré après chaque test complet.
+                runCatching {
+                    SpeedHistoryStore.append(context, SpeedHistoryStore.Entry(
+                        ts = System.currentTimeMillis(),
+                        downMbps = r.downloadMbps,
+                        upMbps = r.uploadMbps,
+                        latencyMs = r.latencyMs
+                    ))
+                }
+                historyTick++
+            }
             testing = false
         }
     }
@@ -142,6 +161,13 @@ fun NetworkPanel() {
                     MetricBox("Latence", "${r.latencyMs} ms")
                 }
             }
+
+            // --- Historique des débits (v1.9.0) ---
+            val history = remember(historyTick) { SpeedHistoryStore.load(context) }
+            if (history.isNotEmpty()) {
+                Spacer(Modifier.height(16.dp))
+                SpeedHistorySection(history)
+            }
         }
     }
 }
@@ -193,3 +219,89 @@ private fun RowScope.MetricBox(label: String, value: String) {
         )
     }
 }
+
+/** Section « Historique des débits » : dernier test + mini-graphique + 5 derniers. */
+@Composable
+private fun SpeedHistorySection(history: List<SpeedHistoryStore.Entry>) {
+    val last = history.last()
+    Column {
+        Text(
+            "📈 Historique des débits",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Dernier test : ↓ ${SpeedTest.formatMbps(last.downMbps)} Mbps · ↑ " +
+                "${SpeedTest.formatMbps(last.upMbps)} Mbps · ${last.latencyMs} ms",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(8.dp))
+        SpeedHistoryGraph(history.takeLast(20))
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "5 derniers tests",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold
+        )
+        history.takeLast(5).asReversed().forEach { e ->
+            Row(Modifier.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    formatHistoryDate(e.ts),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.width(84.dp)
+                )
+                Text(
+                    "↓ ${SpeedTest.formatMbps(e.downMbps)}",
+                    style = LocalMonoTextStyle.current,
+                    modifier = Modifier.width(72.dp)
+                )
+                Text(
+                    "↑ ${SpeedTest.formatMbps(e.upMbps)}",
+                    style = LocalMonoTextStyle.current,
+                    modifier = Modifier.width(72.dp)
+                )
+                Text("${e.latencyMs} ms", style = LocalMonoTextStyle.current)
+            }
+        }
+    }
+}
+
+/** Mini-graphique Canvas des débits down (primaire) / up (tertiaire). */
+@Composable
+private fun SpeedHistoryGraph(
+    entries: List<SpeedHistoryStore.Entry>,
+    modifier: Modifier = Modifier
+) {
+    val downColor = MaterialTheme.colorScheme.primary
+    val upColor = MaterialTheme.colorScheme.tertiary
+    Canvas(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(120.dp)
+    ) {
+        if (entries.size < 2) return@Canvas
+        val w = size.width
+        val h = size.height
+        val maxVal = maxOf(entries.maxOf { it.downMbps }, entries.maxOf { it.upMbps }, 1.0)
+
+        fun yOf(v: Double): Float = h - ((v / maxVal) * h).toFloat().coerceIn(0f, h)
+        fun xOf(i: Int): Float = (i.toFloat() / (entries.size - 1)) * w
+
+        fun drawSeries(color: androidx.compose.ui.graphics.Color, sel: (SpeedHistoryStore.Entry) -> Double) {
+            val path = Path()
+            entries.forEachIndexed { i, e ->
+                val x = xOf(i)
+                val y = yOf(sel(e))
+                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            }
+            drawPath(path, color, style = Stroke(width = 2.5f, cap = StrokeCap.Round))
+        }
+        drawSeries(downColor) { it.downMbps }
+        drawSeries(upColor) { it.upMbps }
+    }
+}
+
+private fun formatHistoryDate(ts: Long): String =
+    java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.FRENCH).format(java.util.Date(ts))

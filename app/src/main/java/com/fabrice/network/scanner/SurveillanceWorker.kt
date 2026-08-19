@@ -1,0 +1,89 @@
+package com.fabrice.network.scanner
+
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import androidx.core.app.NotificationCompat
+import androidx.work.CoroutineWorker
+import androidx.work.WorkerParameters
+
+/**
+ * Worker de surveillance (v1.9.0) : scan réseau léger (sans UI, sans ports) puis
+ * détection des nouveaux appareils. Si un appareil inconnu apparaît → notification
+ * push sur le canal `surveillance`. Ne tourne jamais si le toggle est OFF.
+ */
+class SurveillanceWorker(context: Context, params: WorkerParameters) :
+    CoroutineWorker(context, params) {
+
+    companion object {
+        const val CHANNEL_ID = "surveillance"
+    }
+
+    override suspend fun doWork(): Result {
+        val ctx = applicationContext
+        if (!SurveillanceScheduler.isEnabled(ctx)) {
+            AppLog.i("Surveillance", "Toggle OFF — scan annulé")
+            return Result.success()
+        }
+        return try {
+            AppLog.i("Surveillance", "Scan planifié en cours…")
+            val oui = OuiDatabase.load(ctx)
+            val devices = NetworkScanner.scan(
+                oui = oui,
+                scanPorts = false,
+                scanEconomy = true,
+                scanFast = true
+            ) { _, _ -> }
+
+            val historyStore = HistoryStore(ctx)
+            val previous = historyStore.load()
+            val fresh = ScanHistory.detectNewDevices(previous, devices)
+
+            // ⚠️ Pas de notification au tout premier scan (historique vide).
+            if (fresh.isNotEmpty() && previous.isNotEmpty()) {
+                notifyNewDevices(ctx, fresh)
+                AppLog.i("Surveillance", "${fresh.size} nouvel(aux) appareil(s) → notification")
+            }
+            if (devices.isNotEmpty()) historyStore.save(devices)
+            AppLog.i("Surveillance", "Scan planifié terminé : ${devices.size} appareil(s)")
+            Result.success()
+        } catch (e: Exception) {
+            AppLog.e("Surveillance", "Échec du scan planifié : ${e.message}")
+            Result.retry()
+        }
+    }
+
+    /** Notification « 🆕 Nouvel appareil détecté » sur le canal dédié `surveillance`. */
+    private fun notifyNewDevices(context: Context, newDevices: List<Device>) {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            nm.createNotificationChannel(
+                NotificationChannel(CHANNEL_ID, "Surveillance réseau", NotificationManager.IMPORTANCE_DEFAULT)
+            )
+        }
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pending = PendingIntent.getActivity(
+            context, 2001, intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val head = newDevices.take(3).joinToString(", ") { it.hostname.ifBlank { it.ip } }
+        val text = if (newDevices.size > 3) "$head et ${newDevices.size - 3} autres…" else head
+        val title = if (newDevices.size == 1)
+            "🆕 Nouvel appareil détecté : ${newDevices.first().hostname.ifBlank { newDevices.first().ip }}"
+        else "🆕 ${newDevices.size} nouveaux appareils détectés"
+        val notif = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setAutoCancel(true)
+            .setContentIntent(pending)
+            .build()
+        runCatching { nm.notify(2001, notif) }
+    }
+}

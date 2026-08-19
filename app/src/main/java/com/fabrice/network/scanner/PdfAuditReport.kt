@@ -33,7 +33,8 @@ object PdfAuditReport {
         val highVulns: Int,
         val kevVulns: Int,
         val devices: List<Device>,
-        val vulnsByIp: Map<String, VulnScanner.DeviceVulns>
+        val vulnsByIp: Map<String, VulnScanner.DeviceVulns>,
+        val ssid: String = ""
     ) {
         /** Score global 0-100 : pénalise les vulnérabilités critiques/hautes. */
         val globalScore: Int
@@ -48,6 +49,10 @@ object PdfAuditReport {
 
         val riskLabel: String
             get() = VulnScanner.labelForScore(100 - globalScore)
+
+        /** Nombre d'appareils avec une credential par défaut trouvée. */
+        val defaultCredCount: Int
+            get() = devices.count { it.defaultCred != null }
     }
 
     /** Agrège les données de scan — pure, testable. */
@@ -55,7 +60,8 @@ object PdfAuditReport {
         devices: List<Device>,
         vulnsByIp: Map<String, VulnScanner.DeviceVulns>,
         selfIp: String,
-        networkCidr: String
+        networkCidr: String,
+        ssid: String = ""
     ): AuditData {
         var critical = 0
         var high = 0
@@ -75,8 +81,47 @@ object PdfAuditReport {
             highVulns = high,
             kevVulns = kev,
             devices = devices,
-            vulnsByIp = vulnsByIp
+            vulnsByIp = vulnsByIp,
+            ssid = ssid
         )
+    }
+
+    /** Synthèse exécutive (une ligne) — pure, testable. */
+    fun buildSummary(data: AuditData): String =
+        "Score global ${data.globalScore}/100 (${data.riskLabel}) — " +
+            "${data.deviceCount} appareil(s), ${data.criticalVulns} vulnérabilité(s) critique(s), " +
+            "${data.highVulns} élevée(s), ${data.defaultCredCount} credential(s) par défaut."
+
+    /**
+     * Recommandations hiérarchisées (top 5, générées depuis les données) — pure.
+     * Priorité décroissante : credentials par défaut > vulnérabilités critiques >
+     * vulnérabilités élevées > firmware de la box > WPA3.
+     */
+    fun buildRecommendations(data: AuditData): List<String> {
+        data class Rec(val priority: Int, val text: String)
+        val recs = mutableListOf<Rec>()
+
+        data.devices.filter { it.defaultCred != null }.forEach { d ->
+            recs.add(Rec(100, "Changer le mot de passe par défaut de ${d.ip} (${d.hostname.ifBlank { d.ip }}) : ${d.defaultCred}"))
+        }
+        data.devices.forEach { d ->
+            val v = data.vulnsByIp[d.ip] ?: return@forEach
+            val name = d.hostname.ifBlank { d.ip }
+            if (v.criticalCount > 0) {
+                recs.add(Rec(90, "Mettre à jour $name : ${v.criticalCount} vulnérabilité(s) critique(s)"))
+            }
+            if (v.highCount > 0) {
+                recs.add(Rec(70, "Mettre à jour $name : ${v.highCount} vulnérabilité(s) élevée(s)"))
+            }
+        }
+        if (data.devices.any { it.isGateway && data.vulnsByIp[it.ip]?.let { v -> v.criticalCount + v.highCount + v.kevCount > 0 } == true }) {
+            recs.add(Rec(60, "Mettre à jour le firmware de la box"))
+        }
+        if (data.criticalVulns + data.highVulns > 0) {
+            recs.add(Rec(50, "Passer le réseau Wi-Fi en WPA3"))
+        }
+
+        return recs.sortedByDescending { it.priority }.take(5).map { it.text }
     }
 
     /**
@@ -117,8 +162,13 @@ object PdfAuditReport {
 
         val sub = Paint().apply { textSize = 11f; color = Color.rgb(120, 120, 120) }
         canvas.drawText("Généré le ${data.generatedAt}", margin, y, sub)
-        canvas.drawText("Réseau : ${data.selfIp}${if (data.networkCidr.isNotBlank()) " ($data.networkCidr)" else ""}", margin, y + 14f, sub)
-        y += 40f
+        val ssidPart = if (data.ssid.isNotBlank()) " · SSID : ${data.ssid}" else ""
+        canvas.drawText(
+            "Réseau : ${data.selfIp}${if (data.networkCidr.isNotBlank()) " ($data.networkCidr)" else ""}$ssidPart",
+            margin, y + 14f, sub
+        )
+        canvas.drawText("NetworkScanner v${BuildConfig.VERSION_NAME}", margin, y + 28f, sub)
+        y += 52f
 
         // --- Score global ---
         val scorePaint = Paint().apply { textSize = 40f; isFakeBoldText = true }
@@ -131,6 +181,24 @@ object PdfAuditReport {
             "${data.criticalVulns} critiques · ${data.highVulns} élevées · ${data.kevVulns} activement exploitées",
             margin, y + 52f, scoreSub)
         y += 80f
+
+        // --- Synthèse exécutive ---
+        y = drawSectionHeader(canvas, "Synthèse exécutive", margin, contentW, y)
+        val summaryPaint = Paint().apply { textSize = 10f; color = Color.rgb(40, 40, 40) }
+        drawWrapped(canvas, buildSummary(data), margin, y + 14f, summaryPaint, contentW, 14f)
+        y += 40f
+
+        // --- Recommandations hiérarchisées (top 5) ---
+        val recos = buildRecommendations(data)
+        if (recos.isNotEmpty()) {
+            y = drawSectionHeader(canvas, "Recommandations hiérarchisées", margin, contentW, y)
+            val recoPaint = Paint().apply { textSize = 10f; color = Color.rgb(40, 40, 40) }
+            recos.forEachIndexed { i, r ->
+                drawWrapped(canvas, "${i + 1}. $r", margin, y + 12f, recoPaint, contentW, 15f)
+                y += 18f
+            }
+            y += 6f
+        }
 
         // --- Appareils ---
         y = drawSectionHeader(canvas, "Appareils détectés", margin, contentW, y)
@@ -200,6 +268,26 @@ object PdfAuditReport {
         val line = Paint().apply { strokeWidth = 1.5f; color = Color.rgb(201, 151, 43) }
         canvas.drawLine(margin, y + 18f, margin + contentW, y + 18f, line)
         return y + 30f
+    }
+
+    /** Dessine un texte avec retour à la ligne automatique (mot par mot). */
+    private fun drawWrapped(
+        canvas: Canvas, text: String, x: Float, y: Float, paint: Paint,
+        maxWidth: Float, lineHeight: Float
+    ) {
+        var cy = y
+        var line = ""
+        text.split(' ').forEach { word ->
+            val candidate = if (line.isEmpty()) word else "$line $word"
+            if (paint.measureText(candidate) > maxWidth && line.isNotEmpty()) {
+                canvas.drawText(line, x, cy, paint)
+                cy += lineHeight
+                line = word
+            } else {
+                line = candidate
+            }
+        }
+        if (line.isNotEmpty()) canvas.drawText(line, x, cy, paint)
     }
 
     private fun drawRow(
