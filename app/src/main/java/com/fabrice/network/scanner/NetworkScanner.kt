@@ -37,7 +37,9 @@ data class Device(
     val snmpLocation: String? = null,
     val snmpUptime: Long? = null,
     val defaultCred: String? = null,
-    val credTested: Boolean = false
+    val credTested: Boolean = false,
+    /** « WiFi » / « Ethernet » si connu (via les interfaces de la box), sinon null. */
+    val connectionType: String? = null
 )
 
 /** Résultat d'un ping : vivant ? + TTL de la réponse (pour l'OS) + latence. */

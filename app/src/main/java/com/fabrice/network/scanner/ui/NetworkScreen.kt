@@ -3,6 +3,7 @@ package com.fabrice.network.scanner.ui
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,10 +37,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.fabrice.network.scanner.NetworkInfoProvider
+import com.fabrice.network.scanner.ProximityIndicator
 import com.fabrice.network.scanner.WifiQuality
 import com.fabrice.network.scanner.ui.theme.LocalMonoTextStyle
 import kotlinx.coroutines.delay
@@ -61,6 +64,8 @@ fun NetworkScreen() {
     var geoInfo by remember { mutableStateOf<NetworkInfoProvider.GeoIpInfo?>(null) }
     // Historique RSSI : (secondes, dBm) — 120 échantillons = 2 min
     val history = remember { mutableListOf<Pair<Long, Int>>() }
+    // Fenêtre glissante de 4 échantillons RSSI pour la tendance de proximité
+    val rssiWindow = remember { mutableListOf<Int>() }
     val startTime = remember { System.currentTimeMillis() }
 
     // Récupère l'IP publique (WAN) + GeoIP au chargement, hors thread UI
@@ -84,6 +89,8 @@ fun NetworkScreen() {
             if (rssi != Int.MIN_VALUE) {
                 history.add(((System.currentTimeMillis() - startTime) / 1000) to rssi)
                 if (history.size > 120) history.removeAt(0)
+                rssiWindow.add(rssi)
+                if (rssiWindow.size > 4) rssiWindow.removeAt(0)
             }
             delay(2_000)
         }
@@ -100,6 +107,11 @@ fun NetworkScreen() {
 
         // --- Qualité Wi-Fi + test réseau (déplacé depuis l'onglet Périphériques) ---
         NetworkPanel()
+
+        Spacer(Modifier.height(8.dp))
+
+        // --- Proximité de la box (tendance RSSI) ---
+        ProximityCard(samples = rssiWindow.toList())
 
         Spacer(Modifier.height(8.dp))
 
@@ -196,6 +208,57 @@ fun NetworkScreen() {
         }
     }
     SnackbarHost(hostState = snackbar, modifier = Modifier.align(Alignment.BottomCenter))
+    }
+}
+
+/** Carte proximité de la box : tendance RSSI + flèche animée. */
+@Composable
+private fun ProximityCard(samples: List<Int>) {
+    val trend = ProximityIndicator.tendency(samples)
+    val emoji = ProximityIndicator.emoji(trend)
+    val arrow = ProximityIndicator.arrow(trend)
+    val label = ProximityIndicator.trendLabel(trend)
+    val strength = ProximityIndicator.strength(samples)
+    // Animation : la flèche pulse légèrement quand on se déplace
+    val scale by animateFloatAsState(
+        targetValue = if (trend != ProximityIndicator.Trend.NEUTRAL) 1.25f else 1f,
+        label = "proximityScale"
+    )
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "$emoji $arrow",
+                style = MaterialTheme.typography.headlineMedium,
+                modifier = Modifier.graphicsLayer { scaleX = scale; scaleY = scale }
+            )
+            Spacer(Modifier.padding(horizontal = 8.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "Proximité de la box",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    label,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    "Signal ${WifiQuality.formatRssi(samples.lastOrNull() ?: Int.MIN_VALUE)} · $strength/4",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
     }
 }
 

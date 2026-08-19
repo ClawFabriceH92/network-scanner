@@ -1,6 +1,8 @@
 package com.fabrice.network.scanner
 
 import android.content.Context
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -157,6 +159,19 @@ class FreeboxBoxClient(private val context: Context) : BoxClient {
                         if (ipv4.count { it == '.' } == 3) { ip = ipv4; break }
                     }
                 }
+                // Connexion (WiFi vs Ethernet) : l'endpoint liste ne fournit pas
+                // toujours `interfaces` (disponible sur le détail
+                // /lan/browser/pub/{id}/). Lecture défensive — null si absent.
+                // ⚠️ À confirmer sur box réelle.
+                var connectionType: String? = null
+                e.optJSONArray("interfaces")?.let { ifs ->
+                    for (j in 0 until ifs.length()) {
+                        when (ifs.getJSONObject(j).optString("type", "").lowercase()) {
+                            "ethernet", "eth", "wired" -> { connectionType = "Ethernet"; break }
+                            "wifi", "wireless", "wlan" -> { connectionType = "WiFi"; break }
+                        }
+                    }
+                }
                 out.add(
                     BoxClient.BoxDevice(
                         name = name,
@@ -166,11 +181,128 @@ class FreeboxBoxClient(private val context: Context) : BoxClient {
                         active = e.optBoolean("active", false),
                         reachable = e.optBoolean("reachable", false),
                         lastActivity = e.optLong("last_activity", 0)
-                            .let { if (it > 0) java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", java.util.Locale.FRENCH).format(java.util.Date(it * 1000)) else "" }
+                            .let { if (it > 0) java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", java.util.Locale.FRENCH).format(java.util.Date(it * 1000)) else "" },
+                        connectionType = connectionType
                     )
                 )
             }
             out
+        }
+
+    // -------------------------------------------------------------------------
+    // Endpoints multi-box (v1.8.0) — chaque appel protégé, null si échec.
+    // Endpoints Freebox OS v9 documentés ; ⚠️ à confirmer sur box réelle.
+    // -------------------------------------------------------------------------
+
+    override suspend fun fetchLeases(): List<BoxLease>? =
+        withContext(Dispatchers.IO) {
+            val session = sessionToken() ?: return@withContext null
+            val d = http("GET", "/dhcp/leases/", token = session) ?: return@withContext null
+            if (!d.optBoolean("success", false)) return@withContext null
+            val arr = d.optJSONArray("result") ?: return@withContext null
+            val out = mutableListOf<BoxLease>()
+            for (i in 0 until arr.length()) {
+                val e = arr.getJSONObject(i)
+                out.add(
+                    BoxLease(
+                        ip = e.optString("ip", ""),
+                        mac = e.optString("mac", ""),
+                        hostname = e.optString("hostname", ""),
+                        leaseTime = if (e.has("lease_time")) e.optLong("lease_time") else null,
+                        active = true
+                    )
+                )
+            }
+            out
+        }
+
+    override suspend fun fetchConnection(): BoxConnection? =
+        withContext(Dispatchers.IO) {
+            val session = sessionToken() ?: return@withContext null
+            val d = http("GET", "/connection/", token = session) ?: return@withContext null
+            if (!d.optBoolean("success", false)) return@withContext null
+            val r = d.optJSONObject("result") ?: return@withContext null
+            BoxConnection(
+                publicIp = r.optString("ipv4", "").ifBlank { r.optString("ipv6", "") },
+                connectionType = r.optString("type", ""),
+                downloadRate = if (r.has("rate_down")) r.optLong("rate_down") else null,
+                uploadRate = if (r.has("rate_up")) r.optLong("rate_up") else null
+            )
+        }
+
+    override suspend fun fetchBandwidth(): BoxBandwidth? =
+        withContext(Dispatchers.IO) {
+            val session = sessionToken() ?: return@withContext null
+            val d = http("GET", "/connection/bandwidth/", token = session) ?: return@withContext null
+            if (!d.optBoolean("success", false)) return@withContext null
+            val r = d.optJSONObject("result") ?: return@withContext null
+            // Freebox renvoie rate_down / rate_up en octets/s (B/s).
+            BoxBandwidth(
+                downloadBps = r.optLong("rate_down", 0),
+                uploadBps = r.optLong("rate_up", 0)
+            )
+        }
+
+    override suspend fun fetchWifi(): BoxWifi? =
+        withContext(Dispatchers.IO) {
+            val session = sessionToken() ?: return@withContext null
+            // Liste des points d'accès WiFi, puis détail du premier AP.
+            // ⚠️ Structure exacte (config.ssid / channel / stations) à confirmer
+            // sur box réelle — on lit de façon défensive plusieurs clés.
+            val list = http("GET", "/wifi/", token = session) ?: return@withContext null
+            val aps = list.optJSONArray("result") ?: return@withContext null
+            if (aps.length() == 0) return@withContext null
+            val first = aps.getJSONObject(0)
+            val apId = first.optString("id", "")
+            var ssid = ""
+            var security = ""
+            var channel = ""
+            var band = ""
+            var clients: List<WifiClient> = emptyList()
+            if (apId.isNotBlank()) {
+                val ap = http("GET", "/wifi/ap/$apId/", token = session)?.optJSONObject("result")
+                if (ap != null) {
+                    val cfg = ap.optJSONObject("config")
+                    ssid = cfg?.optString("ssid", "") ?: ap.optString("name", "")
+                    security = cfg?.optString("security", "")
+                        ?: ap.optString("security", "")
+                    channel = ap.optString("channel", "")
+                    band = ap.optString("band", "")
+                }
+                // Stations connectées (clients WiFi) — endpoint dédié.
+                val stations = http("GET", "/wifi/ap/$apId/stations/", token = session)
+                    ?.optJSONArray("result")
+                if (stations != null) {
+                    val tmp = mutableListOf<WifiClient>()
+                    for (i in 0 until stations.length()) {
+                        val s = stations.getJSONObject(i)
+                        tmp.add(
+                            WifiClient(
+                                mac = s.optString("mac", ""),
+                                ip = s.optString("ip", ""),
+                                hostname = s.optString("hostname", ""),
+                                rssi = if (s.has("rssi")) s.optInt("rssi") else null,
+                                band = s.optString("band", "")
+                            )
+                        )
+                    }
+                    clients = tmp
+                }
+            }
+            BoxWifi(ssid = ssid, security = security, channel = channel, band = band, clients = clients)
+        }
+
+    override suspend fun fetchSystem(): BoxSystem? =
+        withContext(Dispatchers.IO) {
+            val session = sessionToken() ?: return@withContext null
+            val d = http("GET", "/sys/", token = session) ?: return@withContext null
+            if (!d.optBoolean("success", false)) return@withContext null
+            val r = d.optJSONObject("result") ?: return@withContext null
+            // Freebox expose firmware_version et uptime (chaîne « 3 jours 5 h ») ;
+            // pas d'uptime en secondes ni de température unique → null.
+            BoxSystem(
+                firmware = r.optString("firmware_version", "")
+            )
         }
 
     private fun hmacSha1(key: String, data: String): String {

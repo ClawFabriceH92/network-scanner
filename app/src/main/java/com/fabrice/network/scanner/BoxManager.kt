@@ -3,16 +3,44 @@ package com.fabrice.network.scanner
 import android.content.Context
 
 /**
- * Détecte la box du réseau (par fabricant de la passerelle) et fournit le
- * client adapté. Complète le scan direct avec les équipements vus par la box
- * (baux DHCP) — les appareils silencieux que le ping/ARP ne voit pas.
+ * Détecte la box du réseau (par fabricant/OUi de la passerelle + passerelle)
+ * et fournit le client adapté. Complète le scan direct avec les équipements
+ * vus par la box (baux DHCP).
  *
- * Fabricants connus (via OUI de la passerelle) :
- * - Freebox SAS → FreeboxBoxClient
- * - Sagemcom / Technicolor / Nokia → Livebox (Sagemcom) — à ajouter
- * - Bouygues / Bbox → Bbox API — à ajouter
+ * Détection multi-box (v1.8.0) — la passerelle EST le discriminant fiable :
+ * - 192.168.0.254 ou OUI « freebox » → FreeboxBoxClient (API v9)
+ * - 192.168.1.254 ou OUI « bouygues/bbox » → BboxBoxClient (sysbus, communauté)
+ * - 192.168.1.1   ou OUI « livebox/orange/technicolor » → LiveboxBoxClient (TR-064)
+ * - OUI « sfr/numericable/neuf » → PAS d'API fiable → nom « Box SFR » + null
  */
 object BoxManager {
+
+    /** Type de box reconnu (utilisé pour l'annuaire + la sélection du client). */
+    enum class BoxType(val label: String) {
+        FREEBOX("Freebox"),
+        BBOX("Bbox"),
+        LIVEBOX("Livebox"),
+        SFR("SFR")
+    }
+
+    /**
+     * Classifie une passerelle + fabricant → type de box (pur, testable).
+     * L'ordre compte : la passerelle prime sur le fabricant (Sagemcom fabrique
+     * AUSSI des Bbox ET des Livebox — seule la gateway les distingue).
+     */
+    fun classify(gateway: String, vendor: String): BoxType? {
+        val v = vendor.lowercase()
+        return when {
+            v.contains("freebox") || gateway == "192.168.0.254" -> BoxType.FREEBOX
+            gateway == "192.168.1.254" -> BoxType.BBOX
+            gateway == "192.168.1.1" -> BoxType.LIVEBOX
+            v.contains("bouygues") || v.contains("bbox") -> BoxType.BBOX
+            v.contains("livebox") || v.contains("orange") ||
+                v.contains("technicolor") || v.contains("sagemcom") -> BoxType.LIVEBOX
+            v.contains("sfr") || v.contains("numericable") || v.contains("neuf") -> BoxType.SFR
+            else -> null
+        }
+    }
 
     /** Client sélectionné pour la box actuelle (null si non reconnue). */
     private var cachedClient: BoxClient? = null
@@ -31,26 +59,25 @@ object BoxManager {
         val gatewayMac = arp[gateway] ?: ""
         val vendor = NetworkScanner.vendorFor(gatewayMac, oui)
 
-        val client = when {
-            vendor.contains("freebox", true) || gateway == "192.168.0.254" ->
-                FreeboxBoxClient(context)
-            vendor.contains("sagemcom", true) ||
-                vendor.contains("technicolor", true) -> null // Livebox : à implémenter
-            else -> null // Box non reconnue ou SFR (pas d'API)
+        val type = classify(gateway, vendor)
+        val client = when (type) {
+            BoxType.FREEBOX -> FreeboxBoxClient(context)
+            BoxType.BBOX -> BboxBoxClient()
+            BoxType.LIVEBOX -> LiveboxBoxClient(context)
+            // SFR : pas d'API fiable — on mémorise le nom mais pas de client.
+            BoxType.SFR -> null
+            null -> null
         }
         cachedClient = client
         cachedGateway = gateway
 
-        // Annuaire des boxes : mémorise le type reconnu (Freebox/Livebox) avec
-        // un nom par défaut si la box n'est pas encore connue.
-        val prefs = context.getSharedPreferences(BoxStore.PREFS, Context.MODE_PRIVATE)
-        val boxType = when {
-            vendor.contains("freebox", true) || gateway == "192.168.0.254" -> "Freebox"
-            vendor.contains("sagemcom", true) || vendor.contains("technicolor", true) -> "Livebox"
-            else -> null
-        }
-        if (boxType != null && BoxStore.getBoxName(prefs, gateway) == null) {
-            BoxStore.saveBox(prefs, gateway, "Box $boxType", boxType)
+        // Annuaire des boxes : mémorise le type reconnu avec un nom par défaut.
+        if (type != null) {
+            val prefs = context.getSharedPreferences(BoxStore.PREFS, Context.MODE_PRIVATE)
+            val boxType = type.label
+            if (BoxStore.getBoxName(prefs, gateway) == null) {
+                BoxStore.saveBox(prefs, gateway, "Box $boxType", boxType)
+            }
         }
         return client
     }

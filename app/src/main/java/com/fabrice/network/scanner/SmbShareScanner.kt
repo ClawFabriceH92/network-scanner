@@ -39,6 +39,21 @@ object SmbShareScanner {
         val note: String = ""
     )
 
+    /** Un partage NON VIDE : nom + nombre d'éléments + premiers noms (max 5). */
+    data class SmbShareEntry(
+        val shareName: String,
+        val itemCount: Int,
+        val firstItems: List<String>
+    )
+
+    /**
+     * Construit un `SmbShareEntry` à partir du nom du partage et de la liste
+     * des entrées racine. Pur et testable (aucun accès réseau) : tronque à 5
+     * premiers noms.
+     */
+    fun summarize(shareName: String, entries: List<String>): SmbShareEntry =
+        SmbShareEntry(shareName = shareName, itemCount = entries.size, firstItems = entries.take(5))
+
     /**
      * Teste les partages SMB d'un hôte en guest. Retourne la liste triée :
      * partages accessibles d'abord (nom + note), puis partages testés mais
@@ -95,6 +110,62 @@ object SmbShareScanner {
         } catch (e: Exception) {
             share.close()
             SmbShare(name, accessible = false, note = "protégé")
+        }
+    }
+
+    /**
+     * Liste les partages SMB NON VIDES d'un hôte en accès invité (v1.8.0).
+     * Pour chaque partage listable, compte les entrées racine et ne garde que
+     * les partages avec au moins un élément. Les partages protégés/vides sont
+     * ignorés silencieusement. Jamais bloquant (runCatching + timeout).
+     *
+     * @param host IP de l'appareil
+     * @return partages non vides triés par nombre d'éléments décroissant
+     */
+    fun nonEmptyShares(host: String, timeoutMs: Int = 3_000): List<SmbShareEntry> {
+        val config = SmbConfig.builder()
+            .withTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+            .build()
+        val client = SMBClient(config)
+        val connection = try {
+            client.connect(host, 445)
+        } catch (e: Exception) {
+            return emptyList()
+        }
+        val session = try {
+            connection.authenticate(AuthenticationContext.guest())
+        } catch (e: Exception) {
+            runCatching { connection.close() }
+            return emptyList()
+        }
+        val entries = mutableListOf<SmbShareEntry>()
+        try {
+            DEFAULT_SHARES.forEach { shareName ->
+                val names = listShareEntries(session, shareName)
+                if (!names.isNullOrEmpty()) {
+                    entries.add(summarize(shareName, names))
+                }
+            }
+        } finally {
+            runCatching { connection.close() }
+        }
+        return entries.sortedByDescending { it.itemCount }
+    }
+
+    /** Liste les entrées racine d'un partage (noms de fichiers/dossiers), null si refusé. */
+    private fun listShareEntries(session: Session, name: String): List<String>? {
+        val share = try {
+            session.connectShare(name) as? DiskShare
+        } catch (e: Exception) {
+            return null
+        } ?: return null
+        return try {
+            val list = share.list("")
+            share.close()
+            list.mapNotNull { it.fileName?.takeIf { n -> n != "." && n != ".." } }
+        } catch (e: Exception) {
+            runCatching { share.close() }
+            null
         }
     }
 }

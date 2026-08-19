@@ -7,6 +7,11 @@ package com.fabrice.network.scanner
  *
  * Chaque box expose son propre client. La détection se fait par le fabricant
  * de la passerelle (OUI) : Freebox SAS → Freebox, Sagemcom → Livebox, etc.
+ *
+ * v1.8.0 : les méthodes `fetchLeases`/`fetchConnection`/`fetchBandwidth`/
+ * `fetchWifi`/`fetchSystem` ont des implémentations PAR DÉFAUT (null/false) —
+ * une box qui ne supporte pas un endpoint renvoie null et l'UI affiche
+ * « non disponible », sans casser les clients existants.
  */
 interface BoxClient {
 
@@ -24,7 +29,9 @@ interface BoxClient {
         val hostType: String,     // "computer", "printer", "camera"…
         val active: Boolean,
         val reachable: Boolean,
-        val lastActivity: String  // date lisible ou ""
+        val lastActivity: String, // date lisible ou ""
+        /** « WiFi » / « Ethernet » si la box l'expose, sinon null. */
+        val connectionType: String? = null
     )
 
     /**
@@ -35,6 +42,23 @@ interface BoxClient {
 
     /** Le client peut-il être utilisé tel quel (box joignable + auth dispo) ? */
     fun isAvailable(): Boolean
+
+    // --- Nouveaux endpoints multi-box (v1.8.0) — null = non supporté ---
+
+    /** Baux DHCP vus par la box. */
+    suspend fun fetchLeases(): List<BoxLease>? = null
+
+    /** Connexion WAN : IP publique, type d'accès, débit contractuel. */
+    suspend fun fetchConnection(): BoxConnection? = null
+
+    /** Débit temps réel (octets/s). */
+    suspend fun fetchBandwidth(): BoxBandwidth? = null
+
+    /** WiFi de la box : SSID, sécurité, canal, clients. */
+    suspend fun fetchWifi(): BoxWifi? = null
+
+    /** État système : firmware, uptime, température. */
+    suspend fun fetchSystem(): BoxSystem? = null
 
     /**
      * Coupe l'accès réseau/Internet d'un périphérique (blocage légal via l'API
