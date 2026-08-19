@@ -12,6 +12,11 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      NETWORK_SCANNER_KEYSTORE_B64: ${{ secrets.NETWORK_SCANNER_KEYSTORE_B64 }}
+      NETWORK_SCANNER_KEYSTORE_PASSWORD: ${{ secrets.NETWORK_SCANNER_KEYSTORE_PASSWORD }}
+      NETWORK_SCANNER_KEY_ALIAS: ${{ secrets.NETWORK_SCANNER_KEY_ALIAS }}
+      NETWORK_SCANNER_KEY_PASSWORD: ${{ secrets.NETWORK_SCANNER_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
 
@@ -33,15 +38,15 @@ jobs:
       - name: Run unit tests
         run: ./gradlew testDebugUnitTest --no-daemon
 
-      - name: Build debug APK
-        run: ./gradlew assembleDebug --no-daemon
+      - name: Build signed release APK
+        run: ./gradlew assembleRelease --no-daemon
 
       - name: Rename APK with version
         id: version
         run: |
-          VERSION=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts | head -1)
+          VERSION=$(grep -oP 'versionName\s*=\s*"\K[^\"]+' app/build.gradle.kts | head -1)
           echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
-          cp app/build/outputs/apk/debug/app-debug.apk "network-scanner-v${VERSION}.apk"
+          cp app/build/outputs/apk/release/app-release.apk "network-scanner-v${VERSION}.apk"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4

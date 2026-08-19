@@ -39,13 +39,13 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
@@ -94,6 +94,7 @@ import com.fabrice.network.scanner.CveUpdateManager
 import com.fabrice.network.scanner.Device
 import com.fabrice.network.scanner.DeviceStore
 import com.fabrice.network.scanner.DeviceType
+import com.fabrice.network.scanner.DownloadUpdate
 import com.fabrice.network.scanner.FreeboxBoxClient
 import com.fabrice.network.scanner.GatewayWatcher
 import com.fabrice.network.scanner.HistoryStore
@@ -107,6 +108,7 @@ import com.fabrice.network.scanner.ScanPersistence
 import com.fabrice.network.scanner.ServiceFingerprint
 import com.fabrice.network.scanner.SmbShareScanner
 import com.fabrice.network.scanner.SnmpScanner
+import com.fabrice.network.scanner.UpdateChecker
 import com.fabrice.network.scanner.VulnScanner
 import com.fabrice.network.scanner.WakeOnLan
 import com.fabrice.network.scanner.ui.theme.LocalMonoTextStyle
@@ -198,6 +200,11 @@ fun ScannerScreen() {
     var cveStale by remember { mutableStateOf(false) }
     // Menu d'actions secondaires (⋮) : rapport, export, aide, à propos
     var menuExpanded by remember { mutableStateOf(false) }
+    // --- Auto-update GitHub Releases (section « Mise à jour » de À propos) ---
+    var updateInfo by remember { mutableStateOf<UpdateChecker.UpdateInfo?>(null) }
+    var updateStatus by remember { mutableStateOf<String?>(null) }
+    var updateChecking by remember { mutableStateOf(false) }
+    var updateDownloading by remember { mutableStateOf(false) }
 
     // --- Ergonomie : recherche / tri / filtres / regroupement ---
     var searchQuery by remember { mutableStateOf("") }
@@ -336,6 +343,46 @@ fun ScannerScreen() {
             cveUpdating = false
         }
     }
+
+    // --- Auto-update : vérifie GitHub Releases (manuel depuis À propos, ou
+    //     silencieux au lancement — jamais sur le thread UI). ---
+    fun checkAppUpdate(silent: Boolean) {
+        if (updateChecking) return
+        scope.launch {
+            updateChecking = true
+            if (!silent) updateStatus = null
+            val info = withContext(Dispatchers.IO) { UpdateChecker.check() }
+            updateChecking = false
+            val err = UpdateChecker.lastError
+            when {
+                info != null -> {
+                    updateInfo = info
+                    if (!silent) updateStatus = "⬇️ Nouvelle version disponible : v${info.version}"
+                }
+                err != null -> {
+                    updateInfo = null
+                    if (!silent) updateStatus = "⚠️ Erreur API : $err"
+                }
+                else -> {
+                    updateInfo = null
+                    if (!silent) updateStatus = "✅ À jour (v${BuildConfig.VERSION_NAME})"
+                }
+            }
+        }
+    }
+
+    fun downloadAppUpdate() {
+        val info = updateInfo ?: return
+        scope.launch {
+            updateDownloading = true
+            updateStatus = "⬇️ Téléchargement en cours… (suis la notification)"
+            withContext(Dispatchers.IO) { DownloadUpdate.start(context, info.url) }
+            updateDownloading = false
+        }
+    }
+
+    // Check auto silencieux au lancement (ne pollue pas l'UI).
+    LaunchedEffect(Unit) { checkAppUpdate(silent = true) }
 
     // Permissions Bluetooth (Android 12+ : BLUETOOTH_SCAN + BLUETOOTH_CONNECT,
     // et ACCESS_FINE_LOCATION pour le BLE sur certains appareils)
@@ -500,32 +547,6 @@ fun ScannerScreen() {
                 }
             }
         },
-        floatingActionButton = {
-            // FAB visible seulement avec des appareils — l'état vide a son
-            // propre bouton central (un seul bouton Scanner à l'écran)
-            if (screen == 0 && selectedTab == 0 && devices.isNotEmpty()) {
-                ExtendedFloatingActionButton(
-                    onClick = { if (!scanning) runScan() },
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary
-                ) {
-                    if (scanning) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.onPrimary
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            if (progressTotal > 0) "Scan $progress/$progressTotal"
-                            else "Scan en cours…"
-                        )
-                    } else {
-                        Text("Scanner")
-                    }
-                }
-            }
-        },
         snackbarHost = { SnackbarHost(snackbar) }
     ) { padding ->
         Column(
@@ -536,7 +557,14 @@ fun ScannerScreen() {
             if (screen == 1) {
                 HelpScreen()
             } else if (screen == 2) {
-                AboutScreen()
+                AboutScreen(
+                    updateInfo = updateInfo,
+                    updateStatus = updateStatus,
+                    updateChecking = updateChecking,
+                    updateDownloading = updateDownloading,
+                    onCheckUpdate = { checkAppUpdate(silent = false) },
+                    onDownloadUpdate = { downloadAppUpdate() }
+                )
             } else if (screen == 3) {
                 NewDevicesScreen(
                     devices = newDevices,
@@ -571,6 +599,17 @@ fun ScannerScreen() {
                         }
                         error?.let { msg ->
                             ErrorBanner(message = msg, onRetry = { runScan() })
+                        }
+                        // Bouton « Scanner » compact en haut de l'écran
+                        // (remplace l'ancien FAB en bas — une seule action
+                        // primaire par état : l'état vide a son bouton central).
+                        if (devices.isNotEmpty()) {
+                            ScanButton(
+                                scanning = scanning,
+                                progress = progress,
+                                progressTotal = progressTotal,
+                                onScan = { runScan() }
+                            )
                         }
                         if (devices.isEmpty() && !scanning) {
                             EmptyDevicesState(onScan = { runScan() })
@@ -800,6 +839,17 @@ private fun DeviceList(
                 }
             }
         }
+        item(key = "version") {
+            Text(
+                "v${BuildConfig.VERSION_NAME}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp)
+            )
+        }
     }
 }
 
@@ -919,13 +969,24 @@ private fun SearchFilterBar(
         OutlinedTextField(
             value = query,
             onValueChange = onQueryChange,
-            modifier = Modifier.fillMaxWidth(),
-            placeholder = { Text("Rechercher (IP, nom, fabricant, modèle, MAC)") },
-            leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(44.dp),
+            placeholder = {
+                Text("Rechercher…", style = MaterialTheme.typography.bodySmall)
+            },
+            leadingIcon = {
+                Icon(
+                    Icons.Filled.Search,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+            },
             singleLine = true,
-            shape = MaterialTheme.shapes.large
+            textStyle = MaterialTheme.typography.bodySmall,
+            shape = MaterialTheme.shapes.medium
         )
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(4.dp))
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -994,6 +1055,41 @@ private fun ErrorBanner(message: String, onRetry: () -> Unit) {
             )
             TextButton(onClick = onRetry) {
                 Text("Réessayer", fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+/** Bouton « Scanner » compact en haut de l'écran (remplace l'ancien FAB). */
+@Composable
+private fun ScanButton(
+    scanning: Boolean,
+    progress: Int,
+    progressTotal: Int,
+    onScan: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.End
+    ) {
+        Button(
+            onClick = { if (!scanning) onScan() },
+            shape = MaterialTheme.shapes.medium
+        ) {
+            if (scanning) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    if (progressTotal > 0) "Scan $progress/$progressTotal"
+                    else "Scan en cours…"
+                )
+            } else {
+                Text("⚡ Scanner")
             }
         }
     }

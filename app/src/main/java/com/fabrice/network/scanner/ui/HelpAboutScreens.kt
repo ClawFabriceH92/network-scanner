@@ -8,11 +8,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -24,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import com.fabrice.network.scanner.BuildConfig
 import com.fabrice.network.scanner.CveDatabaseStore
 import com.fabrice.network.scanner.CveUpdateManager
+import com.fabrice.network.scanner.UpdateChecker
 import com.fabrice.network.scanner.ui.theme.LocalMonoTextStyle
 
 /** Écran d'aide : explication du scan, du score, des limites. */
@@ -81,9 +85,16 @@ fun HelpScreen() {
     }
 }
 
-/** Écran À propos : version, sources, RGPD, changelog. */
+/** Écran À propos : version, sources, RGPD, changelog + mise à jour. */
 @Composable
-fun AboutScreen() {
+fun AboutScreen(
+    updateInfo: UpdateChecker.UpdateInfo?,
+    updateStatus: String?,
+    updateChecking: Boolean,
+    updateDownloading: Boolean,
+    onCheckUpdate: () -> Unit,
+    onDownloadUpdate: () -> Unit
+) {
     val context = LocalContext.current
     val dbVersion = CveDatabaseStore.version(context) ?: "inconnue"
     val dbAge = CveUpdateManager.ageDays(dbVersion)
@@ -104,6 +115,16 @@ fun AboutScreen() {
         Text("À propos", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         InfoCard("Version", BuildConfig.VERSION_NAME)
         InfoCard("Base CVE", "$dbVersion ($ageLabel)")
+        Spacer(Modifier.height(4.dp))
+        Text("Mise à jour", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+        UpdateSection(
+            updateInfo = updateInfo,
+            updateStatus = updateStatus,
+            updateChecking = updateChecking,
+            updateDownloading = updateDownloading,
+            onCheckUpdate = onCheckUpdate,
+            onDownloadUpdate = onDownloadUpdate
+        )
         Spacer(Modifier.height(4.dp))
         Text("Sources des données", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
         HelpCard("NVD (NIST)") {
@@ -138,6 +159,51 @@ fun AboutScreen() {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+/** Section « Mise à jour » de l'écran À propos (auto-update GitHub Releases). */
+@Composable
+private fun UpdateSection(
+    updateInfo: UpdateChecker.UpdateInfo?,
+    updateStatus: String?,
+    updateChecking: Boolean,
+    updateDownloading: Boolean,
+    onCheckUpdate: () -> Unit,
+    onDownloadUpdate: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = onCheckUpdate, enabled = !updateChecking) {
+                if (updateChecking) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("Vérification…")
+                } else {
+                    Text("Vérifier les mises à jour")
+                }
+            }
+            if (updateStatus != null) {
+                Text(
+                    updateStatus,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (updateInfo != null) {
+                Button(onClick = onDownloadUpdate, enabled = !updateDownloading) {
+                    if (updateDownloading) Text("Téléchargement…")
+                    else Text("Installer v${updateInfo.version}")
+                }
+            }
+        }
     }
 }
 
