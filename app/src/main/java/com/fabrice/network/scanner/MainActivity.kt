@@ -1,4 +1,5 @@
 package com.fabrice.network.scanner
+import com.fabrice.network.scanner.update.UpdateManager
 
 import android.os.Bundle
 import androidx.activity.compose.setContent
@@ -24,6 +25,7 @@ import com.fabrice.network.scanner.ui.theme.NetworkScannerTheme
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        UpdateManager.start(this)
         enableEdgeToEdge()
         setContent {
             NetworkScannerTheme {
