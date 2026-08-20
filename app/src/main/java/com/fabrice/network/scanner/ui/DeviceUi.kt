@@ -59,7 +59,7 @@ fun deviceVendorLabel(device: Device): String = when {
     device.isRandomizedMac || device.vendor == "Adresse privée" ->
         "Adresse privée (MAC aléatoire)"
     device.mac.isBlank() && device.vendor.isBlank() ->
-        "Fabricant inconnu · MAC masquée par Android"
+        "Fabricant inconnu · MAC non détectée"
     device.vendor.isNotBlank() -> device.vendor
     else -> "Fabricant inconnu"
 }

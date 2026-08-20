@@ -76,6 +76,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -84,6 +85,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.fabrice.network.scanner.AppLog
 import com.fabrice.network.scanner.PermissionHelper
+import com.fabrice.network.scanner.R
 import com.fabrice.network.scanner.BluetoothScanner
 import com.fabrice.network.scanner.BoxClient
 import com.fabrice.network.scanner.BoxManager
@@ -587,19 +589,19 @@ fun ScannerScreen() {
                     NavigationBarItem(
                         selected = screen == 0 && selectedTab == 2,
                         onClick = { screen = 0; selectedTab = 2 },
-                        icon = { Text("📡") },
+                        icon = { Icon(painterResource(R.drawable.ic_bluetooth), contentDescription = null) },
                         label = { Text("Bluetooth") }
                     )
                     NavigationBarItem(
                         selected = screen == 0 && selectedTab == 3,
                         onClick = { screen = 0; selectedTab = 3 },
-                        icon = { Text("📶") },
+                        icon = { Icon(painterResource(R.drawable.ic_wifi), contentDescription = null) },
                         label = { Text("WiFi") }
                     )
                     NavigationBarItem(
                         selected = screen == 0 && selectedTab == 4,
                         onClick = { screen = 0; selectedTab = 4 },
-                        icon = { Text("📱") },
+                        icon = { Icon(painterResource(R.drawable.ic_nfc), contentDescription = null) },
                         label = { Text("NFC") }
                     )
                     NavigationBarItem(

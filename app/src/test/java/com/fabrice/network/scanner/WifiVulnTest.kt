@@ -2,6 +2,7 @@ package com.fabrice.network.scanner
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -134,5 +135,18 @@ class WifiVulnTest {
         val c = WifiScanner.WifiNetwork("Other", "aa:bb:cc:dd:ee:03", -70, 2437, "[WPA2-PSK-CCMP][ESS]")
         assertTrue(PublicWifiAnalyzer.evilTwinHint(listOf(a, b)))
         assertFalse(PublicWifiAnalyzer.evilTwinHint(listOf(a, c)))
+    }
+
+    @Test
+    fun channelForFrequency_commonBands() {
+        assertEquals(1, WifiScanner.channelForFrequency(2412))
+        assertEquals(6, WifiScanner.channelForFrequency(2437))
+        assertEquals(13, WifiScanner.channelForFrequency(2472))
+        assertEquals(36, WifiScanner.channelForFrequency(5180))
+        assertEquals(100, WifiScanner.channelForFrequency(5500))
+        assertEquals(165, WifiScanner.channelForFrequency(5825))
+        assertEquals(1, WifiScanner.channelForFrequency(5955)) // 6 GHz
+        assertNull(WifiScanner.channelForFrequency(4000))
+        assertNull(WifiScanner.channelForFrequency(0))
     }
 }

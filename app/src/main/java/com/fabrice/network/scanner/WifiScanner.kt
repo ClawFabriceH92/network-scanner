@@ -44,8 +44,17 @@ object WifiScanner {
         val capabilities: String
     ) {
         val band: String get() = NetworkInfoProvider.bandForFrequency(frequency)
+        val channel: Int? get() = channelForFrequency(frequency)
         val security: WifiSecurity get() = parseCapabilities(capabilities)
         val score: Int get() = WifiVulnAnalyzer.analyze(security, ssid).score
+    }
+
+    /** Canal Wi-Fi depuis la fréquence (MHz) : 2.4 GHz, 5 GHz, 6 GHz. */
+    fun channelForFrequency(freq: Int): Int? = when {
+        freq in 2412..2484 -> (freq - 2412) / 5 + 1
+        freq in 5000..5900 -> (freq - 5000) / 5
+        freq in 5955..7115 -> (freq - 5955) / 5 + 1
+        else -> null
     }
 
     private var receiver: BroadcastReceiver? = null

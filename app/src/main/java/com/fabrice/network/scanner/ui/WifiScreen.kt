@@ -328,7 +328,7 @@ private fun WifiNetworkCard(net: WifiScanner.WifiNetwork, onClick: () -> Unit) {
                     maxLines = 1
                 )
                 Text(
-                    "${net.security.label} · ${net.band.ifBlank { "bande ?" }}",
+                    "${net.security.label} · ${net.channel?.let { "Canal $it" } ?: net.band.ifBlank { "bande ?" }}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -412,6 +412,7 @@ private fun WifiNetworkDetail(net: WifiScanner.WifiNetwork, onDismiss: () -> Uni
                 InfoRow("SSID", net.ssid.ifBlank { "(caché)" })
                 InfoRow("BSSID", net.bssid.ifBlank { "non disponible (randomisé)" }, mono = true)
                 InfoRow("Bande", net.band.ifBlank { "—" })
+                InfoRow("Canal", net.channel?.toString() ?: "—", mono = true)
                 InfoRow("Signal", "${net.rssi} dBm", mono = true)
                 InfoRow("Chiffrement", net.security.label)
                 InfoRow("Score", "${vuln.score}/100 — ${vuln.label}")
