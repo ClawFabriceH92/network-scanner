@@ -84,6 +84,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.fabrice.network.scanner.AppLog
+import com.fabrice.network.scanner.AuditLogStore
 import com.fabrice.network.scanner.PermissionHelper
 import com.fabrice.network.scanner.R
 import com.fabrice.network.scanner.BluetoothScanner
@@ -95,6 +96,7 @@ import com.fabrice.network.scanner.CsvExporter
 import com.fabrice.network.scanner.CveDatabaseStore
 import com.fabrice.network.scanner.CveEntry
 import com.fabrice.network.scanner.CveUpdateManager
+import com.fabrice.network.scanner.DepartureAlert
 import com.fabrice.network.scanner.Device
 import com.fabrice.network.scanner.DeviceStore
 import com.fabrice.network.scanner.DeviceType
@@ -109,10 +111,12 @@ import com.fabrice.network.scanner.PdfAuditReport
 import com.fabrice.network.scanner.PortScanner
 import com.fabrice.network.scanner.ScanHistory
 import com.fabrice.network.scanner.ScanPersistence
+import com.fabrice.network.scanner.ScheduleStore
 import com.fabrice.network.scanner.ServiceFingerprint
 import com.fabrice.network.scanner.SmbShareScanner
 import com.fabrice.network.scanner.SnmpScanner
 import com.fabrice.network.scanner.TechOptions
+import com.fabrice.network.scanner.TrustStore
 import com.fabrice.network.scanner.UpdateChecker
 import com.fabrice.network.scanner.VulnScanner
 import com.fabrice.network.scanner.WakeOnLan
@@ -155,6 +159,8 @@ fun ScannerScreen() {
     val deviceStore = remember { DeviceStore(context) }
     val historyStore = remember { HistoryStore(context) }
     val presenceStore = remember { PresenceHistoryStore(context) }
+    val trustStore = remember { TrustStore(context) }
+    val auditStore = remember { AuditLogStore(context) }
 
     var devices by remember { mutableStateOf<List<Device>>(emptyList()) }
     var scanning by remember { mutableStateOf(false) }
@@ -181,6 +187,8 @@ fun ScannerScreen() {
     }
     // Clés des appareils absents de l'historique avant le dernier scan → badges 🆕
     var newKeys by remember { mutableStateOf(setOf<String>()) }
+    // Clés des appareils marqués « de confiance » (pas d'alerte ni badge nouveau)
+    var trustedKeys by remember { mutableStateOf(trustStore.trustedKeys()) }
     // Force la recomposition des cartes après renommage/favori
     var refreshTick by remember { mutableStateOf(0) }
     var scanCount by remember { mutableStateOf(0) }
@@ -309,10 +317,12 @@ fun ScannerScreen() {
                 emptyList()
             }
             AppLog.i("Scan", "Scan terminé : ${result.size} appareil(s)")
-            // Détection des nouveaux appareils par rapport à l'historique connu
+            // Détection des nouveaux appareils (hors confiance) par rapport à
+            // l'historique connu, puis des départs (étaient là, ne répondent plus).
             if (result.isNotEmpty()) {
                 val previous = historyStore.load()
-                val fresh = ScanHistory.detectNewDevices(previous, result)
+                val trusted = trustStore.trustedKeys()
+                val fresh = ScanHistory.detectNewDevices(previous, result, trusted)
                 if (fresh.isNotEmpty()) {
                     newDevices = fresh
                     newKeys = fresh.map { ScanHistory.identityKey(it) }.toSet()
@@ -322,7 +332,23 @@ fun ScannerScreen() {
                     if (previous.isNotEmpty()) {
                         NewDeviceNotifier.notify(context, fresh)
                     }
+                    fresh.forEach { d ->
+                        val name = deviceDisplayName(d, deviceStore.customName(ScanHistory.identityKey(d)))
+                        auditStore.append("$name (${d.ip}) apparu")
+                    }
                 }
+                // Appareils absents du scan courant (étaient là, ne répondent plus).
+                val departed = DepartureAlert.detectDepartures(previous, result, trusted)
+                if (departed.isNotEmpty()) {
+                    DepartureAlert.notify(context, departed)
+                    departed.forEach { d ->
+                        val name = deviceDisplayName(d, deviceStore.customName(ScanHistory.identityKey(d)))
+                        auditStore.append("$name (${d.ip}) absent")
+                    }
+                }
+                auditStore.append(
+                    "Scan terminé : ${result.size} appareil(s) (${result.count { it.alive }} en ligne)"
+                )
                 historyStore.save(result)
                 // Historique de présence : enregistré APRÈS le scan (non-bloquant)
                 withContext(Dispatchers.IO) {
@@ -362,6 +388,12 @@ fun ScannerScreen() {
                 NewDeviceNotifier.notifyDefaultCred(context, d)
             }
             ScanPersistence.save(context, result)
+            // Blocages programmés : applique les fenêtres dues via l'API box
+            // (no-op rapide si aucune planification). Non-bloquant pour l'UI.
+            val scheduledActions = runCatching { ScheduleStore.applyDue(context) }.getOrDefault(0)
+            if (scheduledActions > 0) {
+                AppLog.i("Scan", "$scheduledActions action(s) de blocage programmé")
+            }
             scanSource = ""
             lastScanAge = null
             scanning = false
@@ -499,9 +531,16 @@ fun ScannerScreen() {
             device = detail,
             store = deviceStore,
             isNew = ScanHistory.identityKey(detail) in newKeys,
+            isTrusted = ScanHistory.identityKey(detail) in trustedKeys,
             vulns = vulnsByIp[detail.ip],
             onDismiss = { selected = null },
-            onSaved = { refreshTick++ }
+            onSaved = { refreshTick++ },
+            onToggleTrust = {
+                val key = ScanHistory.identityKey(detail)
+                val nowTrusted = trustStore.toggle(key)
+                trustedKeys = if (nowTrusted) trustedKeys + key else trustedKeys - key
+                refreshTick++
+            }
         )
         return
     }
@@ -515,6 +554,8 @@ fun ScannerScreen() {
                             1 -> "Réglages"
                             2 -> "À propos"
                             3 -> "Nouveaux appareils"
+                            4 -> "Timeline d'audit"
+                            5 -> "Carte réseau"
                             else -> "Scan Réseau"
                         }
                     )
@@ -564,6 +605,22 @@ fun ScannerScreen() {
                                         menuExpanded = false
                                         screen = 2
                                     }
+                                )
+                                HorizontalDivider()
+                                DropdownMenuItem(
+                                    text = { Text("Timeline d'audit") },
+                                    onClick = {
+                                        menuExpanded = false
+                                        screen = 4
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("🗺️ Carte réseau") },
+                                    onClick = {
+                                        menuExpanded = false
+                                        screen = 5
+                                    },
+                                    enabled = devices.isNotEmpty() && !scanning
                                 )
                             }
                         }
@@ -629,7 +686,8 @@ fun ScannerScreen() {
                     updateChecking = updateChecking,
                     updateDownloading = updateDownloading,
                     onCheckUpdate = { checkAppUpdate(silent = false) },
-                    onDownloadUpdate = { downloadAppUpdate() }
+                    onDownloadUpdate = { downloadAppUpdate() },
+                    onOpenTimeline = { screen = 4 }
                 )
             } else if (screen == 2) {
                 AboutScreen(
@@ -638,11 +696,22 @@ fun ScannerScreen() {
                     updateChecking = updateChecking,
                     updateDownloading = updateDownloading,
                     onCheckUpdate = { checkAppUpdate(silent = false) },
-                    onDownloadUpdate = { downloadAppUpdate() }
+                    onDownloadUpdate = { downloadAppUpdate() },
+                    onOpenTimeline = { screen = 4 }
                 )
             } else if (screen == 3) {
                 NewDevicesScreen(
                     devices = newDevices,
+                    onDeviceClick = { selected = it }
+                )
+            } else if (screen == 4) {
+                AuditLogScreen()
+            } else if (screen == 5) {
+                NetworkMapScreen(
+                    devices = devices,
+                    deviceStore = deviceStore,
+                    vulnsByIp = vulnsByIp,
+                    onBack = { screen = 0 },
                     onDeviceClick = { selected = it }
                 )
             } else {
@@ -775,6 +844,13 @@ fun ScannerScreen() {
                                         val fav = !deviceStore.isFavorite(key)
                                         deviceStore.setFavorite(key, fav)
                                         refreshTick++
+                                    },
+                                    trustedKeys = trustedKeys,
+                                    onToggleTrust = { device ->
+                                        val key = ScanHistory.identityKey(device)
+                                        val nowTrusted = trustStore.toggle(key)
+                                        trustedKeys = if (nowTrusted) trustedKeys + key else trustedKeys - key
+                                        refreshTick++
                                     }
                                 )
                             }
@@ -828,7 +904,9 @@ private fun DeviceList(
     onToggleBlock: (BoxClient.BoxDevice) -> Unit = {},
     blockedMacs: Set<String> = emptySet(),
     onDeviceClick: (Device) -> Unit,
-    onToggleFavorite: (Device) -> Unit
+    onToggleFavorite: (Device) -> Unit,
+    trustedKeys: Set<String> = emptySet(),
+    onToggleTrust: (Device) -> Unit = {}
 ) {
     @Suppress("UNUSED_EXPRESSION") refreshTick
     val displayList = buildDisplayList(
@@ -936,9 +1014,11 @@ private fun DeviceList(
                         displayName = deviceDisplayName(device, deviceStore.customName(key)),
                         isFavorite = deviceStore.isFavorite(key),
                         isNew = key in newKeys,
+                        isTrusted = key in trustedKeys,
                         vulns = vulnsByIp[device.ip],
                         onClick = { onDeviceClick(device) },
-                        onToggleFavorite = { onToggleFavorite(device) }
+                        onToggleFavorite = { onToggleFavorite(device) },
+                        onToggleTrust = { onToggleTrust(device) }
                     )
                 }
             }
@@ -1660,9 +1740,11 @@ private fun DeviceCard(
     displayName: String,
     isFavorite: Boolean,
     isNew: Boolean,
+    isTrusted: Boolean,
     vulns: VulnScanner.DeviceVulns?,
     onClick: () -> Unit,
-    onToggleFavorite: () -> Unit
+    onToggleFavorite: () -> Unit,
+    onToggleTrust: () -> Unit
 ) {
     val semantic = LocalScannerColors.current
     Card(
@@ -1754,6 +1836,12 @@ private fun DeviceCard(
                         contentDescription = if (isFavorite) "Retirer des favoris" else "Ajouter aux favoris",
                         tint = if (isFavorite) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                IconButton(onClick = onToggleTrust) {
+                    Text(
+                        if (isTrusted) "✅" else "➕",
+                        style = MaterialTheme.typography.titleSmall
                     )
                 }
                 if (!device.alive) {
@@ -1875,9 +1963,11 @@ private fun DeviceDetailScreen(
     device: Device,
     store: DeviceStore,
     isNew: Boolean,
+    isTrusted: Boolean,
     vulns: VulnScanner.DeviceVulns?,
     onDismiss: () -> Unit,
-    onSaved: () -> Unit
+    onSaved: () -> Unit,
+    onToggleTrust: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1916,6 +2006,12 @@ private fun DeviceDetailScreen(
                             contentDescription = "Favori",
                             tint = if (isFav) MaterialTheme.colorScheme.primary
                             else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    IconButton(onClick = onToggleTrust) {
+                        Text(
+                            if (isTrusted) "✅" else "➕",
+                            style = MaterialTheme.typography.titleSmall
                         )
                     }
                 }

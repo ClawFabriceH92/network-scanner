@@ -13,10 +13,18 @@ object ScanHistory {
     fun identityKey(device: Device): String =
         if (device.mac.isNotBlank()) device.mac else "ip:${device.ip}"
 
-    /** Appareils présents dans [current] mais absents de [previous]. */
-    fun detectNewDevices(previous: List<Device>, current: List<Device>): List<Device> {
+    /**
+     * Appareils présents dans [current] mais absents de [previous] (et non
+     * marqués de confiance). Les clés [trusted] sont ignorées — les fonctions
+     * pures reçoivent le Set en paramètre et ne lisent jamais les prefs.
+     */
+    fun detectNewDevices(
+        previous: List<Device>,
+        current: List<Device>,
+        trusted: Set<String> = emptySet()
+    ): List<Device> {
         val known = previous.map { identityKey(it) }.toSet()
-        return current.filter { identityKey(it) !in known }
+        return current.filter { identityKey(it) !in known && identityKey(it) !in trusted }
     }
 
     /**

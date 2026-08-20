@@ -185,6 +185,7 @@ fun BoxScreen() {
                     }
                 }
             )
+            ScheduleSection()
             Spacer(Modifier.height(16.dp))
         }
         SnackbarHost(hostState = snackbar, modifier = Modifier.align(Alignment.BottomCenter))

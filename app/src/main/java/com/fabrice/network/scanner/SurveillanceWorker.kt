@@ -40,13 +40,36 @@ class SurveillanceWorker(context: Context, params: WorkerParameters) :
 
             val historyStore = HistoryStore(ctx)
             val previous = historyStore.load()
-            val fresh = ScanHistory.detectNewDevices(previous, devices)
+            val trusted = TrustStore(ctx).trustedKeys()
+            val auditStore = AuditLogStore(ctx)
+            val fresh = ScanHistory.detectNewDevices(previous, devices, trusted)
 
             // ⚠️ Pas de notification au tout premier scan (historique vide).
             if (fresh.isNotEmpty() && previous.isNotEmpty()) {
                 notifyNewDevices(ctx, fresh)
                 AppLog.i("Surveillance", "${fresh.size} nouvel(aux) appareil(s) → notification")
             }
+            fresh.forEach { d ->
+                auditStore.append("${d.hostname.ifBlank { d.ip }} (${d.ip}) apparu")
+            }
+
+            // Appareils qui étaient là et ne répondent plus (hors confiance).
+            val departed = DepartureAlert.detectDepartures(previous, devices, trusted)
+            if (departed.isNotEmpty()) {
+                DepartureAlert.notify(ctx, departed)
+                AppLog.i("Surveillance", "${departed.size} appareil(s) absent(s) → notification")
+            }
+            departed.forEach { d ->
+                auditStore.append("${d.hostname.ifBlank { d.ip }} (${d.ip}) absent")
+            }
+            auditStore.append(
+                "Scan planifié : ${devices.size} appareil(s) (${devices.count { it.alive }} en ligne)"
+            )
+
+            // Blocages programmés dus → appliquer via l'API box.
+            val scheduled = runCatching { ScheduleStore.applyDue(ctx) }.getOrDefault(0)
+            if (scheduled > 0) AppLog.i("Surveillance", "$scheduled action(s) de blocage programmé")
+
             if (devices.isNotEmpty()) historyStore.save(devices)
             AppLog.i("Surveillance", "Scan planifié terminé : ${devices.size} appareil(s)")
             Result.success()

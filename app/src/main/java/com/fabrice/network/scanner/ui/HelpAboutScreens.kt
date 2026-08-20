@@ -115,7 +115,8 @@ fun AboutScreen(
     updateChecking: Boolean,
     updateDownloading: Boolean,
     onCheckUpdate: () -> Unit,
-    onDownloadUpdate: () -> Unit
+    onDownloadUpdate: () -> Unit,
+    onOpenTimeline: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val dbVersion = CveDatabaseStore.version(context) ?: "inconnue"
@@ -160,6 +161,10 @@ fun AboutScreen(
                     NewDeviceNotifier.setEnabled(context, it)
                 }
             )
+        }
+        Spacer(Modifier.height(4.dp))
+        Button(onClick = onOpenTimeline, modifier = Modifier.fillMaxWidth()) {
+            Text("🕐 Timeline d'audit")
         }
         Spacer(Modifier.height(4.dp))
         LockSection()
