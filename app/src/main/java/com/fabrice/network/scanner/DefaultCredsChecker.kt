@@ -122,6 +122,14 @@ object DefaultCredsChecker {
     /**
      * Itère les combos (max 8) jusqu'à trouver un accès. Le fetcher retourne le
      * code HTTP (ou null en cas d'erreur réseau) — injectable pour les tests.
+     *
+     * Test STRICT (v1.9.3) pour éliminer les faux positifs :
+     *  1. Le serveur doit RÉELLEMENT demander une authentification : une requête
+     *     SANS credentials doit répondre 401. Sinon (200/302/…), il n'y a pas de
+     *     Basic Auth → AUCUN test → aucun badge (ex: imprimantes qui retournent
+     *     200 à tout le monde).
+     *  2. Succès = code HTTP 200/204/301/302 DIFFÉRENT du baseline (401) —
+     *     c'est-à-dire que les credentials ont réellement changé la réponse.
      * Anti-lockout : stop après 2 réponses 403. Retourne "user/pass" si trouvé,
      * null sinon.
      */
@@ -130,12 +138,18 @@ object DefaultCredsChecker {
         fetcher: (ip: String, port: Int, user: String, pass: String) -> Int?
     ): String? {
         val port = webPort(device) ?: return null
+
+        // 1. Baseline : le serveur exige-t-il une auth ? (401 sans credentials)
+        val baseline = fetcher(device.ip, port, "", "")
+        if (baseline != 401) return null
+
+        // 2. Test des combos — succès seulement si code ≠ baseline et ≠ 401.
         var forbidden = 0
         for ((u, p) in combosFor(device)) {
             when (fetcher(device.ip, port, u, p)) {
-                in SUCCESS_CODES -> return "$u/$p"
                 403 -> { forbidden++; if (forbidden >= 2) return null }
-                else -> { /* 401 / null / autre : on continue */ }
+                in SUCCESS_CODES -> return "$u/$p"
+                else -> { /* 401 / null / autre : échec d'authentification */ }
             }
         }
         return null

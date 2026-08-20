@@ -110,7 +110,8 @@ data class ScannerSemanticColors(
     val gateway: Color,
     val self: Color,
     val newDevice: Color,
-    val privateMac: Color
+    val privateMac: Color,
+    val portOpen: Color
 )
 
 // Rampe de risque (clair) : vert → rouge
@@ -141,7 +142,8 @@ fun lightSemanticColors(scheme: ColorScheme) = ScannerSemanticColors(
     gateway = scheme.primary,
     self = scheme.tertiary,
     newDevice = NewDeviceLight,
-    privateMac = scheme.onSurfaceVariant
+    privateMac = scheme.onSurfaceVariant,
+    portOpen = RiskNoneLight
 )
 
 /** Instance sombre des couleurs sémantiques (statuts liés au schéma courant). */
@@ -156,7 +158,8 @@ fun darkSemanticColors(scheme: ColorScheme) = ScannerSemanticColors(
     gateway = scheme.primary,
     self = scheme.tertiary,
     newDevice = NewDeviceDark,
-    privateMac = scheme.onSurfaceVariant
+    privateMac = scheme.onSurfaceVariant,
+    portOpen = RiskNoneDark
 )
 
 /** Couleur de risque associée à un libellé (« Aucune »…« Critique »). */

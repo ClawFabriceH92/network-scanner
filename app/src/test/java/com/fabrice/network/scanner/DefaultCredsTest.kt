@@ -63,15 +63,15 @@ class DefaultCredsTest {
     }
 
     @Test
-    fun checkDevice_foundOnSecondTry() {
+    fun checkDevice_foundOnFirstComboAfterBaseline() {
         DefaultCredsChecker.load(json)
         val d = Device(ip = "192.168.0.5", vendor = "Unknown", ports = listOf(80))
         var calls = 0
         val found = DefaultCredsChecker.checkDevice(d) { _, _, _, _ ->
             calls++
-            if (calls == 2) 200 else 401
+            if (calls == 1) 401 else 200 // baseline 401, puis 1er combo réussi
         }
-        assertEquals("admin/1234", found)
+        assertEquals("admin/admin", found)
         assertEquals(2, calls)
     }
 
@@ -82,7 +82,7 @@ class DefaultCredsTest {
         var calls = 0
         val found = DefaultCredsChecker.checkDevice(d) { _, _, _, _ -> calls++; 401 }
         assertNull(found)
-        assertEquals(8, calls) // limite 8 combos
+        assertEquals(9, calls) // baseline (sans auth) + 8 combos
     }
 
     @Test
@@ -90,9 +90,24 @@ class DefaultCredsTest {
         DefaultCredsChecker.load(json)
         val d = Device(ip = "192.168.0.5", vendor = "Unknown", ports = listOf(80))
         var calls = 0
-        val found = DefaultCredsChecker.checkDevice(d) { _, _, _, _ -> calls++; 403 }
+        val found = DefaultCredsChecker.checkDevice(d) { _, _, _, _ ->
+            calls++
+            if (calls == 1) 401 else 403
+        }
         assertNull(found)
-        assertEquals(2, calls) // stop après 2×403
+        assertEquals(3, calls) // baseline 401 + 2×403 → stop
+    }
+
+    @Test
+    fun checkDevice_noRealAuth_skipsImprimante() {
+        // Faux positif v1.9.2 : l'imprimante répond 200 SANS auth → aucun test,
+        // aucun badge (le serveur ne demande pas de Basic Auth).
+        DefaultCredsChecker.load(json)
+        val d = Device(ip = "192.168.0.5", vendor = "Unknown", ports = listOf(80))
+        var calls = 0
+        val found = DefaultCredsChecker.checkDevice(d) { _, _, _, _ -> calls++; 200 }
+        assertNull(found)
+        assertEquals(1, calls) // seulement le baseline, aucun combo testé
     }
 
     @Test

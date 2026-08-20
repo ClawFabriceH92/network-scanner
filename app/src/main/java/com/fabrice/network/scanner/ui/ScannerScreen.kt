@@ -512,7 +512,7 @@ fun ScannerScreen() {
                 title = {
                     Text(
                         when (screen) {
-                            1 -> "Aide"
+                            1 -> "Réglages"
                             2 -> "À propos"
                             3 -> "Nouveaux appareils"
                             else -> "Scan Réseau"
@@ -577,38 +577,38 @@ fun ScannerScreen() {
                     NavigationBarItem(
                         selected = screen == 0 && selectedTab == 0,
                         onClick = { screen = 0; selectedTab = 0 },
-                        icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
-                        label = { Text("Scanner") }
+                        icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Scanner") },
+                        label = null
                     )
                     NavigationBarItem(
                         selected = screen == 0 && selectedTab == 1,
                         onClick = { screen = 0; selectedTab = 1 },
-                        icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
-                        label = { Text("Réseau") }
+                        icon = { Icon(painterResource(R.drawable.ic_network), contentDescription = "Réseau") },
+                        label = null
                     )
                     NavigationBarItem(
                         selected = screen == 0 && selectedTab == 2,
                         onClick = { screen = 0; selectedTab = 2 },
-                        icon = { Icon(painterResource(R.drawable.ic_bluetooth), contentDescription = null) },
-                        label = { Text("Bluetooth") }
+                        icon = { Icon(painterResource(R.drawable.ic_bluetooth), contentDescription = "Bluetooth") },
+                        label = null
                     )
                     NavigationBarItem(
                         selected = screen == 0 && selectedTab == 3,
                         onClick = { screen = 0; selectedTab = 3 },
-                        icon = { Icon(painterResource(R.drawable.ic_wifi), contentDescription = null) },
-                        label = { Text("WiFi") }
+                        icon = { Icon(painterResource(R.drawable.ic_wifi), contentDescription = "WiFi") },
+                        label = null
                     )
                     NavigationBarItem(
                         selected = screen == 0 && selectedTab == 4,
                         onClick = { screen = 0; selectedTab = 4 },
-                        icon = { Icon(painterResource(R.drawable.ic_nfc), contentDescription = null) },
-                        label = { Text("NFC") }
+                        icon = { Icon(painterResource(R.drawable.ic_nfc), contentDescription = "NFC") },
+                        label = null
                     )
                     NavigationBarItem(
                         selected = screen == 1,
                         onClick = { screen = 1 },
-                        icon = { Icon(Icons.Filled.Info, contentDescription = null) },
-                        label = { Text("Aide") }
+                        icon = { Icon(Icons.Filled.Settings, contentDescription = "Réglages") },
+                        label = null
                     )
                 }
             }
@@ -621,7 +621,16 @@ fun ScannerScreen() {
                 .fillMaxSize()
         ) {
             if (screen == 1) {
-                HelpScreen()
+                // Onglet « Réglages » : l'écran À propos regroupe PIN, surveillance,
+                // alertes, options, mise à jour et support. L'aide reste dans le menu ⋮.
+                AboutScreen(
+                    updateInfo = updateInfo,
+                    updateStatus = updateStatus,
+                    updateChecking = updateChecking,
+                    updateDownloading = updateDownloading,
+                    onCheckUpdate = { checkAppUpdate(silent = false) },
+                    onDownloadUpdate = { downloadAppUpdate() }
+                )
             } else if (screen == 2) {
                 AboutScreen(
                     updateInfo = updateInfo,
@@ -659,7 +668,9 @@ fun ScannerScreen() {
                                     .padding(horizontal = 16.dp, vertical = 8.dp)
                             )
                             Text(
-                                "Recherche d'appareils… ($progress/$progressTotal)",
+                                "📡 Scan : $progress/$progressTotal adresses (${
+                                    if (progressTotal > 0) (progress * 100 / progressTotal) else 0
+                                }%)",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(horizontal = 16.dp)
@@ -1677,13 +1688,9 @@ private fun DeviceCard(
                     Text(
                         text = displayName,
                         style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
+                        maxLines = 3,
                         overflow = TextOverflow.Ellipsis
                     )
-                    if (isNew) {
-                        Spacer(Modifier.width(6.dp))
-                        NewBadge()
-                    }
                     if (device.isGateway) {
                         Spacer(Modifier.width(6.dp))
                         GatewayBadge()
@@ -1693,16 +1700,22 @@ private fun DeviceCard(
                         SelfBadge()
                     }
                 }
-                Text(
-                    text = device.ip,
-                    style = LocalMonoTextStyle.current,
-                    color = MaterialTheme.colorScheme.primary
-                )
+                if (displayName != device.ip && device.ip.isNotBlank()) {
+                    Text(
+                        text = device.ip,
+                        style = LocalMonoTextStyle.current,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                if (isNew) {
+                    Spacer(Modifier.height(2.dp))
+                    NewBadge()
+                }
                 Text(
                     text = deviceVendorLabel(device),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
                 if (device.mac.isNotBlank() && device.isRandomizedMac) {
@@ -1712,6 +1725,18 @@ private fun DeviceCard(
                         bg = semantic.privateMac,
                         fg = MaterialTheme.colorScheme.surface
                     )
+                }
+                if (device.ports.isNotEmpty()) {
+                    Spacer(Modifier.height(4.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        device.ports.sorted().forEach { p ->
+                            Pill(
+                                text = ":$p",
+                                bg = semantic.portOpen,
+                                fg = onColorFor(semantic.portOpen)
+                            )
+                        }
+                    }
                 }
                 if (device.defaultCred != null) {
                     Spacer(Modifier.height(2.dp))

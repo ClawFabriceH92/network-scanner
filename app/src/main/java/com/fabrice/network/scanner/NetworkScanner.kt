@@ -205,25 +205,33 @@ object NetworkScanner {
         val earlyArp = if (scanFast) readArp() else emptyMap<String, String>()
 
         fun pingSweep() {
-            val executor = Executors.newFixedThreadPool(64)
-            try {
-                hosts.forEachIndexed { index, host ->
-                    executor.execute {
-                        val r = pingHost(host)
-                        if (r.alive) {
-                            alive.add(host)
-                            if (r.ttl != null) ttlMap[host] = r.ttl
-                            if (r.latencyMs != null) latencyMap[host] = r.latencyMs
-                        }
-                        if (index % 64 == 0 || index == hosts.size - 1) {
-                            onProgress(alive.size, hosts.size)
+            // 2 vagues : la 2e rattrape les appareils lents/endormis (1re réponse
+            // souvent perdue). Le compteur progresse à chaque vague.
+            repeat(2) { wave ->
+                val executor = Executors.newFixedThreadPool(64)
+                try {
+                    hosts.forEachIndexed { index, host ->
+                        executor.execute {
+                            val r = pingHost(host)
+                            if (r.alive) {
+                                alive.add(host)
+                                if (r.ttl != null) ttlMap[host] = r.ttl
+                                if (r.latencyMs != null) latencyMap[host] = r.latencyMs
+                            }
+                            if (index % 64 == 0 || index == hosts.size - 1) {
+                                onProgress(alive.size, hosts.size)
+                            }
                         }
                     }
+                    executor.shutdown()
+                    executor.awaitTermination(120, TimeUnit.SECONDS)
+                } finally {
+                    if (!executor.isShutdown) executor.shutdownNow()
                 }
-                executor.shutdown()
-                executor.awaitTermination(120, TimeUnit.SECONDS)
-            } finally {
-                if (!executor.isShutdown) executor.shutdownNow()
+                if (wave == 0) {
+                    // Laisse les réponses lentes arriver avant la 2e vague.
+                    Thread.sleep(1_500)
+                }
             }
         }
 
@@ -449,7 +457,7 @@ object NetworkScanner {
 
     private fun pingHost(host: String): PingResult {
         return try {
-            val process = ProcessBuilder("/system/bin/ping", "-c", "1", "-W", "1", host)
+            val process = ProcessBuilder("/system/bin/ping", "-c", "1", "-W", "3", host)
                 .redirectErrorStream(true)
                 .start()
             // Lire la sortie AVANT waitFor : un tampon plein peut bloquer le
