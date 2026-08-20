@@ -1,14 +1,13 @@
 package com.fabrice.network.scanner.ui
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.LocationManager
 import android.net.wifi.WifiManager
 import android.provider.Settings
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -50,6 +49,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.fabrice.network.scanner.PermissionHelper
 import com.fabrice.network.scanner.PublicWifiAnalyzer
 import com.fabrice.network.scanner.WifiScanner
 import com.fabrice.network.scanner.WifiVulnAnalyzer
@@ -80,14 +80,8 @@ fun WifiScreen() {
     var publicVuln by remember { mutableStateOf<PublicWifiAnalyzer.PublicWifiVuln?>(null) }
     var publicChecked by remember { mutableStateOf(false) }
 
-    // lateinit : la lambda est assignée après le launcher (évite la forward
-    // reference — une fonction locale ne peut pas être appelée avant sa déclaration)
+    // lateinit : la lambda est assignée après (évite la forward reference)
     lateinit var runWifiScan: () -> Unit
-    val locationLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) runWifiScan() else error = "📍 Localisation refusée — indispensable pour scanner le WiFi."
-    }
 
     fun locationEnabled(): Boolean {
         val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
@@ -117,8 +111,17 @@ fun WifiScreen() {
     runWifiScan = {
         val perm = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
         when {
-            perm != PackageManager.PERMISSION_GRANTED ->
-                locationLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+            perm != PackageManager.PERMISSION_GRANTED -> {
+                val act = context as? Activity
+                if (act != null) {
+                    PermissionHelper.requestLocation(act) { granted ->
+                        if (granted) runWifiScan() else
+                            error = "📍 Localisation refusée — indispensable pour scanner le WiFi."
+                    }
+                } else {
+                    error = "📍 Localisation refusée — indispensable pour scanner le WiFi."
+                }
+            }
             !locationEnabled() -> error = "📡 Active la localisation pour scanner le WiFi"
             else -> {
                 scanning = true

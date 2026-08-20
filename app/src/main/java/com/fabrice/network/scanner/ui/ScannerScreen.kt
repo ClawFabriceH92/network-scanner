@@ -1,14 +1,13 @@
 package com.fabrice.network.scanner.ui
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -84,6 +83,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.fabrice.network.scanner.AppLog
+import com.fabrice.network.scanner.PermissionHelper
 import com.fabrice.network.scanner.BluetoothScanner
 import com.fabrice.network.scanner.BoxClient
 import com.fabrice.network.scanner.BoxManager
@@ -239,10 +239,7 @@ fun ScannerScreen() {
     }
 
     // Permission de notification (Android 13+) demandée au 1er scan si les
-    // alertes « nouveaux appareils » sont actives.
-    val notifPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { _ -> /* la notification est envoyée si accordée */ }
+    // alertes « nouveaux appareils » sont actives (via PermissionHelper, codes fixes).
 
     fun runScan() {
         scope.launch {
@@ -259,7 +256,8 @@ fun ScannerScreen() {
                 ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED
             ) {
-                notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                val act = context as? Activity
+                if (act != null) PermissionHelper.requestNotifications(act) { }
             }
             val subnet = NetworkScanner.detectSubnet()
             if (subnet == null) {
@@ -450,28 +448,15 @@ fun ScannerScreen() {
             Manifest.permission.ACCESS_FINE_LOCATION
         )
     }
-    // lateinit : la lambda est assignée après le launcher (évite la forward
-    // reference — une fonction locale ne peut pas être appelée avant sa déclaration)
+    // lateinit : la lambda est assignée après (évite la forward reference)
     lateinit var runBtScan: (Context) -> Unit
-    val btPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { granted ->
-        if (granted.values.any { it }) runBtScan(context) else {
-            btError = "Permissions refusées — active la localisation et le Bluetooth."
-        }
-    }
 
     // Demande la localisation au démarrage si absente (nécessaire pour lire le
-    // SSID/nom du Wi-Fi sur Android 8.1+ ET pour le scan BLE)
-    val locationPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { _ -> /* le scan réseau fonctionne sans, le SSID s'affiche si accordée */ }
-
+    // SSID/nom du Wi-Fi sur Android 8.1+ ET pour le scan BLE) — via PermissionHelper.
     LaunchedEffect(Unit) {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
-            locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+        val act = context as? Activity
+        if (act != null && !PermissionHelper.has(act, Manifest.permission.ACCESS_FINE_LOCATION)) {
+            PermissionHelper.requestLocation(act) { }
         }
     }
 
@@ -480,7 +465,16 @@ fun ScannerScreen() {
             ContextCompat.checkSelfPermission(ctx, it) != PackageManager.PERMISSION_GRANTED
         }
         if (missing.isNotEmpty()) {
-            btPermissionLauncher.launch(btPermissions)
+            val act = ctx as? Activity
+            if (act != null) {
+                PermissionHelper.requestBluetooth(act, btPermissions) { granted ->
+                    if (granted.values.any { it }) runBtScan(act) else {
+                        btError = "Permissions refusées — active la localisation et le Bluetooth."
+                    }
+                }
+            } else {
+                btError = "Permissions Bluetooth non accordées."
+            }
         } else if (!BluetoothScanner.isSupported(ctx)) {
             btError = "Bluetooth désactivé — active-le dans les réglages."
         } else {
