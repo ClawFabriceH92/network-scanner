@@ -23,6 +23,15 @@ détectés : box Freebox, PC, appareils Xiaomi/HP, Synology…).
 
 ## Changelog
 
+### v1.9.5 — finitions interface
+- **Barre de navigation** : les libellés « Bluetooth »/« Réglages » ne passent
+  plus à la ligne. Le libellé n'est affiché que sur l'onglet actif (icône seule
+  pour les autres), sur une seule ligne, avec description d'accessibilité sur
+  chaque icône.
+- **Icônes cohérentes** : les emojis d'action (confiance, blocage box, renommer)
+  sont remplacés par des icônes Material vectorielles (rendu homogène).
+- **Fondu** léger à la bascule d'onglet.
+
 ### v1.9.4 — corrections de bugs & améliorations UI
 Passe de qualité (audit + corrections). L'ancienne version est conservée sous
 le tag git `backup/v1.9.3-pre-improvements`.

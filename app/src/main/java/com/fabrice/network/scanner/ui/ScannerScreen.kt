@@ -10,6 +10,7 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -36,11 +37,16 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -658,42 +664,53 @@ fun ScannerScreen() {
         },
         bottomBar = {
             if (screen == 0 || screen == 1) {
+                // 6 onglets : le libellé n'est affiché que sur l'onglet ACTIF
+                // (alwaysShowLabel = false) et forcé sur une seule ligne — évite
+                // que « Bluetooth » / « Réglages » passent à la ligne. Les icônes
+                // portent un contentDescription pour l'accessibilité (les onglets
+                // inactifs n'affichent pas de texte).
                 NavigationBar {
                     NavigationBarItem(
                         selected = screen == 0 && selectedTab == 0,
                         onClick = { screen = 0; selectedTab = 0 },
-                        icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
-                        label = { Text("Appareils") }
+                        icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Appareils") },
+                        label = { NavLabel("Appareils") },
+                        alwaysShowLabel = false
                     )
                     NavigationBarItem(
                         selected = screen == 0 && selectedTab == 1,
                         onClick = { screen = 0; selectedTab = 1 },
-                        icon = { Icon(painterResource(R.drawable.ic_network), contentDescription = null) },
-                        label = { Text("Réseau") }
+                        icon = { Icon(painterResource(R.drawable.ic_network), contentDescription = "Réseau") },
+                        label = { NavLabel("Réseau") },
+                        alwaysShowLabel = false
                     )
                     NavigationBarItem(
                         selected = screen == 0 && selectedTab == 2,
                         onClick = { screen = 0; selectedTab = 2 },
-                        icon = { Icon(painterResource(R.drawable.ic_bluetooth), contentDescription = null) },
-                        label = { Text("Bluetooth") }
+                        icon = { Icon(painterResource(R.drawable.ic_bluetooth), contentDescription = "Bluetooth") },
+                        label = { NavLabel("Bluetooth") },
+                        alwaysShowLabel = false
                     )
                     NavigationBarItem(
                         selected = screen == 0 && selectedTab == 3,
                         onClick = { screen = 0; selectedTab = 3 },
-                        icon = { Icon(painterResource(R.drawable.ic_wifi), contentDescription = null) },
-                        label = { Text("WiFi") }
+                        icon = { Icon(painterResource(R.drawable.ic_wifi), contentDescription = "WiFi") },
+                        label = { NavLabel("WiFi") },
+                        alwaysShowLabel = false
                     )
                     NavigationBarItem(
                         selected = screen == 0 && selectedTab == 4,
                         onClick = { screen = 0; selectedTab = 4 },
-                        icon = { Icon(painterResource(R.drawable.ic_nfc), contentDescription = null) },
-                        label = { Text("NFC") }
+                        icon = { Icon(painterResource(R.drawable.ic_nfc), contentDescription = "NFC") },
+                        label = { NavLabel("NFC") },
+                        alwaysShowLabel = false
                     )
                     NavigationBarItem(
                         selected = screen == 1,
                         onClick = { screen = 1 },
-                        icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
-                        label = { Text("Réglages") }
+                        icon = { Icon(Icons.Filled.Settings, contentDescription = "Réglages") },
+                        label = { NavLabel("Réglages") },
+                        alwaysShowLabel = false
                     )
                 }
             }
@@ -743,7 +760,13 @@ fun ScannerScreen() {
                     onDeviceClick = { selected = it }
                 )
             } else {
-                when (selectedTab) {
+                // Léger fondu à la bascule d'onglet.
+                Crossfade(
+                    targetState = selectedTab,
+                    label = "tab",
+                    modifier = Modifier.fillMaxSize()
+                ) { tabState ->
+                when (tabState) {
                     1 -> NetworkScreen()
                     2 -> BluetoothScreen(
                         devices = btDevices,
@@ -754,7 +777,10 @@ fun ScannerScreen() {
                     3 -> WifiScreen()
                     4 -> NfcScreen()
                     else -> {
-                        // Onglet Scanner (Périphériques)
+                        // Onglet Scanner (Périphériques). Column car Crossfade
+                        // place son contenu dans une Box (sinon les enfants se
+                        // superposeraient).
+                        Column(Modifier.fillMaxSize()) {
                         if (scanning) {
                             LinearProgressIndicator(
                                 progress = {
@@ -890,11 +916,24 @@ fun ScannerScreen() {
                                 )
                             }
                         }
+                        }
                     }
+                }
                 }
             }
         }
     }
+}
+
+/** Libellé d'onglet : une seule ligne, petit (tient dans un onglet de 1/6). */
+@Composable
+private fun NavLabel(text: String) {
+    Text(
+        text,
+        maxLines = 1,
+        softWrap = false,
+        style = MaterialTheme.typography.labelSmall
+    )
 }
 
 /** Liste des appareils : résumé + alertes + recherche/tri/filtres + cartes. */
@@ -1462,7 +1501,12 @@ private fun BoxDevicesSection(
                         onClick = { renaming = true },
                         modifier = Modifier.semantics { contentDescription = "Renommer la box" }
                     ) {
-                        Text("✏️", style = MaterialTheme.typography.titleSmall)
+                        Icon(
+                            Icons.Filled.Edit,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
                 Text(if (expanded) "▲" else "▼", style = MaterialTheme.typography.labelMedium)
@@ -1526,9 +1570,11 @@ private fun BoxDevicesSection(
                                         if (d.mac in blockedMacs) "Débloquer l'appareil" else "Bloquer l'appareil"
                                 }
                             ) {
-                                Text(
-                                    if (d.mac in blockedMacs) "✅" else "⛔",
-                                    style = MaterialTheme.typography.titleSmall
+                                Icon(
+                                    if (d.mac in blockedMacs) Icons.Filled.Lock else Icons.Outlined.Lock,
+                                    contentDescription = null,
+                                    tint = if (d.mac in blockedMacs) MaterialTheme.colorScheme.error
+                                    else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
@@ -1886,9 +1932,11 @@ private fun DeviceCard(
                             if (isTrusted) "Retirer de la confiance" else "Marquer comme de confiance"
                     }
                 ) {
-                    Text(
-                        if (isTrusted) "✅" else "➕",
-                        style = MaterialTheme.typography.titleSmall
+                    Icon(
+                        if (isTrusted) Icons.Filled.CheckCircle else Icons.Filled.Add,
+                        contentDescription = null,
+                        tint = if (isTrusted) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 if (!device.alive) {
@@ -2075,9 +2123,11 @@ private fun DeviceDetailScreen(
                                 if (isTrusted) "Retirer de la confiance" else "Marquer comme de confiance"
                         }
                     ) {
-                        Text(
-                            if (isTrusted) "✅" else "➕",
-                            style = MaterialTheme.typography.titleSmall
+                        Icon(
+                            if (isTrusted) Icons.Filled.CheckCircle else Icons.Filled.Add,
+                            contentDescription = null,
+                            tint = if (isTrusted) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
