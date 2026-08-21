@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Règles d'extraction (Android 12+, android:dataExtractionRules).
+  Même intention que backup_rules.xml : le hash du PIN de verrouillage (prefs
+  « settings ») est exclu de la sauvegarde cloud ET du transfert d'appareil.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="settings.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="settings.xml" />
+    </device-transfer>
+</data-extraction-rules>

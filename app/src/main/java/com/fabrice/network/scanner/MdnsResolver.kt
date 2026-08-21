@@ -190,6 +190,10 @@ object MdnsResolver {
             if (off + 10 > msg.size) return records
             val (name, afterName) = readName(msg, off)
             var p = afterName
+            // Le nom est de longueur variable : re-vérifier la borne sur l'offset
+            // réel de lecture (p) avant de lire les 10 octets TYPE/CLASS/TTL/RDLEN,
+            // sinon un paquet forgé/tronqué provoque un IndexOutOfBounds.
+            if (p + 10 > msg.size) return records
             val type = u16(p); p += 2
             p += 2 // CLASS
             p += 4 // TTL

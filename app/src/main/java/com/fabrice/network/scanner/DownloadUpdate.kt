@@ -28,8 +28,11 @@ object DownloadUpdate {
     const val PREFS = "update_prefs"
     const val KEY_DOWNLOAD_ID = "download_id"
     const val CHANNEL_ID = "updates"
-    const val FILE_NAME = "network-scanner-update.apk"
-    const val NOTIF_ID = 1001
+    // Fichier + id de notif DISTINCTS de la pile update/AutoUpdater (qui utilise
+    // « network-scanner-update.apk » et l'id 1001) : évite qu'un téléchargement
+    // manuel et un téléchargement auto s'écrasent le même fichier / la même notif.
+    const val FILE_NAME = "network-scanner-update-manual.apk"
+    const val NOTIF_ID = 1002
 
     /** Lance le téléchargement de [url] et mémorise l'id pour le receiver. */
     fun start(context: Context, url: String): Long {
@@ -65,17 +68,22 @@ object DownloadUpdate {
 
     /** Installe l'APK [file] via FileProvider (ACTION_VIEW package-archive). */
     fun installApk(context: Context, file: File) {
-        val uri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            file
-        )
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "application/vnd.android.package-archive")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        // try/catch : appelé depuis un BroadcastReceiver — une exception
+        // (ActivityNotFound / FileProvider) ne doit jamais s'échapper de onReceive
+        // et faire planter le process.
+        runCatching {
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                file
+            )
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
         }
-        context.startActivity(intent)
     }
 
     /** Notification « autorise l'installation » avec action vers les réglages. */

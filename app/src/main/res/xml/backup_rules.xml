@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Règles de sauvegarde (Android 8–11, android:fullBackupContent).
+  On EXCLUT les préférences « settings » : elles contiennent le hash du PIN de
+  verrouillage (lock_pin_hash). Un PIN à 4 chiffres a un très petit espace de
+  clés ; il ne doit jamais quitter l'appareil via une sauvegarde cloud.
+-->
+<full-backup-content>
+    <exclude domain="sharedpref" path="settings.xml" />
+</full-backup-content>

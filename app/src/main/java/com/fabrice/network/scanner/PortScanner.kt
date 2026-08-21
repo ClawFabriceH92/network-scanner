@@ -118,7 +118,9 @@ object PortScanner {
             executor.shutdown()
             executor.awaitTermination(30, TimeUnit.SECONDS)
         } finally {
-            if (!executor.isShutdown) executor.shutdownNow()
+            // isTerminated (isShutdown est déjà vrai après shutdown()) : force
+            // réellement l'arrêt si awaitTermination expire.
+            if (!executor.isTerminated) executor.shutdownNow()
         }
         return open.sorted()
     }

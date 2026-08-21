@@ -8,6 +8,8 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -77,6 +80,8 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -191,7 +196,6 @@ fun ScannerScreen() {
     var trustedKeys by remember { mutableStateOf(trustStore.trustedKeys()) }
     // Force la recomposition des cartes après renommage/favori
     var refreshTick by remember { mutableStateOf(0) }
-    var scanCount by remember { mutableStateOf(0) }
     // Onglet actif : 0 = Scanner, 1 = Réseau, 2 = Bluetooth
     var selectedTab by remember { mutableStateOf(0) }
     // Scan Bluetooth
@@ -204,7 +208,14 @@ fun ScannerScreen() {
     // Équipements vus par la box (baux DHCP) — complète le scan direct
     var boxDevices by remember { mutableStateOf<List<BoxClient.BoxDevice>>(emptyList()) }
     var boxStatus by remember { mutableStateOf<String?>(null) } // null = pas de box, "" = ok
-    var blockedMacs by remember { mutableStateOf(setOf<String>()) } // MAC bloquées via la box
+    // MAC bloquées via la box — persistées (le blocage box survit au redémarrage
+    // de l'app, l'état affiché doit refléter cette réalité).
+    var blockedMacs by remember {
+        mutableStateOf(
+            context.getSharedPreferences("scan_prefs", Context.MODE_PRIVATE)
+                .getStringSet("blocked_macs", emptySet())?.toSet() ?: emptySet()
+        )
+    }
     // Écran : 0 = scan, 1 = aide, 2 = à propos, 3 = nouveaux appareils
     var screen by remember { mutableStateOf(0) }
     // Mode de scan de ports : 0 = standard (16), 1 = élargi (52) — persisté
@@ -277,20 +288,23 @@ fun ScannerScreen() {
                 return@launch
             }
             selfIp = subnet.first
-            val oui = OuiDatabase.load(context)
-            // Base CVE embarquée pour le scan de vulnérabilités (CISA KEV + NVD)
-            val cveDb = CveDatabaseStore.load(context)
+            // Chargements disque/assets (base OUI ~40k lignes, base CVE, signatures
+            // Nmap, creds) hors du thread UI — évite le jank/ANR au 1er scan.
+            val (oui, cveDb) = withContext(Dispatchers.IO) {
+                val loadedOui = OuiDatabase.load(context)
+                val loadedCve = CveDatabaseStore.load(context)
+                runCatching {
+                    context.assets.open("nmap_signatures.json").bufferedReader()
+                        .use { NmapSignatures.load(it.readText()) }
+                }
+                runCatching {
+                    context.assets.open("default_creds.json").bufferedReader()
+                        .use { DefaultCredsChecker.load(it.readText()) }
+                }
+                loadedOui to loadedCve
+            }
             cveDbVersion = cveDb.generated.ifBlank { null }
             cveStale = CveUpdateManager.isStale(cveDbVersion ?: "")
-            // Signatures Nmap + creds par défaut (assets, chargés avant le scan)
-            runCatching {
-                context.assets.open("nmap_signatures.json").bufferedReader()
-                    .use { NmapSignatures.load(it.readText()) }
-            }
-            runCatching {
-                context.assets.open("default_creds.json").bufferedReader()
-                    .use { DefaultCredsChecker.load(it.readText()) }
-            }
             // Cache persistant des fabricants résolus en ligne (par préfixe OUI).
             val vendorPrefs = context.getSharedPreferences("vendor_cache", Context.MODE_PRIVATE)
             AppLog.i("Scan", "Démarrage du scan réseau (fast=${TechOptions.scanFast(context)}, economy=${TechOptions.scanEconomy(context)})")
@@ -320,7 +334,8 @@ fun ScannerScreen() {
             // Détection des nouveaux appareils (hors confiance) par rapport à
             // l'historique connu, puis des départs (étaient là, ne répondent plus).
             if (result.isNotEmpty()) {
-                val previous = historyStore.load()
+                // Lecture de l'historique hors thread UI.
+                val previous = withContext(Dispatchers.IO) { historyStore.load() }
                 val trusted = trustStore.trustedKeys()
                 val fresh = ScanHistory.detectNewDevices(previous, result, trusted)
                 if (fresh.isNotEmpty()) {
@@ -332,26 +347,27 @@ fun ScannerScreen() {
                     if (previous.isNotEmpty()) {
                         NewDeviceNotifier.notify(context, fresh)
                     }
-                    fresh.forEach { d ->
-                        val name = deviceDisplayName(d, deviceStore.customName(ScanHistory.identityKey(d)))
-                        auditStore.append("$name (${d.ip}) apparu")
-                    }
                 }
                 // Appareils absents du scan courant (étaient là, ne répondent plus).
                 val departed = DepartureAlert.detectDepartures(previous, result, trusted)
                 if (departed.isNotEmpty()) {
                     DepartureAlert.notify(context, departed)
+                }
+                // Toutes les écritures disque (journal d'audit, historique, présence)
+                // groupées hors du thread UI — évite le jank en fin de scan.
+                withContext(Dispatchers.IO) {
+                    fresh.forEach { d ->
+                        val name = deviceDisplayName(d, deviceStore.customName(ScanHistory.identityKey(d)))
+                        auditStore.append("$name (${d.ip}) apparu")
+                    }
                     departed.forEach { d ->
                         val name = deviceDisplayName(d, deviceStore.customName(ScanHistory.identityKey(d)))
                         auditStore.append("$name (${d.ip}) absent")
                     }
-                }
-                auditStore.append(
-                    "Scan terminé : ${result.size} appareil(s) (${result.count { it.alive }} en ligne)"
-                )
-                historyStore.save(result)
-                // Historique de présence : enregistré APRÈS le scan (non-bloquant)
-                withContext(Dispatchers.IO) {
+                    auditStore.append(
+                        "Scan terminé : ${result.size} appareil(s) (${result.count { it.alive }} en ligne)"
+                    )
+                    historyStore.save(result)
                     runCatching {
                         val registry = presenceStore.load()
                         presenceStore.save(PresenceHistory.record(registry, result))
@@ -360,16 +376,21 @@ fun ScannerScreen() {
             }
             // Scan de vulnérabilités : banner → produit/version → matching CVE
             // (le champ defaultCred alimente le score : +50 si credential par défaut)
-            vulnsByIp = result.associate { device ->
-                val services = VulnScanner.parseBanner(device.banner)
-                device.ip to VulnScanner.match(services, cveDb, device.defaultCred)
+            vulnsByIp = withContext(Dispatchers.IO) {
+                result.associate { device ->
+                    val services = VulnScanner.parseBanner(device.banner)
+                    device.ip to VulnScanner.match(services, cveDb, device.defaultCred)
+                }
             }
-            // Équipements vus par la box (baux DHCP) — complète le scan
-            val box = BoxManager.detect(context)
+            // Équipements vus par la box (baux DHCP) — complète le scan.
+            // Détection (lecture /proc/net/arp + base OUI) hors thread UI.
+            val box = withContext(Dispatchers.IO) { BoxManager.detect(context) }
             if (box != null) {
                 boxStatus = ""
+                // runCatching : une réponse box malformée ne doit jamais faire
+                // remonter d'exception jusqu'à l'UI.
                 val fetched = withContext(Dispatchers.IO) {
-                    box.fetchDevices()
+                    runCatching { box.fetchDevices() }.getOrNull()
                 }
                 if (fetched != null) {
                     boxDevices = fetched
@@ -387,17 +408,18 @@ fun ScannerScreen() {
             result.filter { it.defaultCred != null }.take(3).forEach { d ->
                 NewDeviceNotifier.notifyDefaultCred(context, d)
             }
-            ScanPersistence.save(context, result)
+            withContext(Dispatchers.IO) { ScanPersistence.save(context, result) }
             // Blocages programmés : applique les fenêtres dues via l'API box
             // (no-op rapide si aucune planification). Non-bloquant pour l'UI.
-            val scheduledActions = runCatching { ScheduleStore.applyDue(context) }.getOrDefault(0)
+            val scheduledActions = withContext(Dispatchers.IO) {
+                runCatching { ScheduleStore.applyDue(context) }.getOrDefault(0)
+            }
             if (scheduledActions > 0) {
                 AppLog.i("Scan", "$scheduledActions action(s) de blocage programmé")
             }
             scanSource = ""
             lastScanAge = null
             scanning = false
-            scanCount++
             refreshTick++
             // Changement de passerelle détecté après ce scan → rescan auto.
             if (onGatewayChangeDetected()) runScan()
@@ -515,8 +537,8 @@ fun ScannerScreen() {
             scope.launch {
                 btScanning = true
                 btError = null
-                val oui = OuiDatabase.load(ctx)
                 btDevices = withContext(Dispatchers.IO) {
+                    val oui = OuiDatabase.load(ctx)
                     BluetoothScanner.scan(ctx, durationMs = 12_000, oui = oui)
                 }
                 btScanning = false
@@ -544,6 +566,11 @@ fun ScannerScreen() {
         )
         return
     }
+
+    // Bouton/geste retour système : revient aux périphériques depuis un
+    // sous-écran (Réglages, À propos, Timeline, Carte, Nouveaux appareils) au
+    // lieu de quitter l'application.
+    BackHandler(enabled = screen != 0) { screen = 0 }
 
     Scaffold(
         topBar = {
@@ -634,38 +661,38 @@ fun ScannerScreen() {
                     NavigationBarItem(
                         selected = screen == 0 && selectedTab == 0,
                         onClick = { screen = 0; selectedTab = 0 },
-                        icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Scanner") },
-                        label = null
+                        icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
+                        label = { Text("Appareils") }
                     )
                     NavigationBarItem(
                         selected = screen == 0 && selectedTab == 1,
                         onClick = { screen = 0; selectedTab = 1 },
-                        icon = { Icon(painterResource(R.drawable.ic_network), contentDescription = "Réseau") },
-                        label = null
+                        icon = { Icon(painterResource(R.drawable.ic_network), contentDescription = null) },
+                        label = { Text("Réseau") }
                     )
                     NavigationBarItem(
                         selected = screen == 0 && selectedTab == 2,
                         onClick = { screen = 0; selectedTab = 2 },
-                        icon = { Icon(painterResource(R.drawable.ic_bluetooth), contentDescription = "Bluetooth") },
-                        label = null
+                        icon = { Icon(painterResource(R.drawable.ic_bluetooth), contentDescription = null) },
+                        label = { Text("Bluetooth") }
                     )
                     NavigationBarItem(
                         selected = screen == 0 && selectedTab == 3,
                         onClick = { screen = 0; selectedTab = 3 },
-                        icon = { Icon(painterResource(R.drawable.ic_wifi), contentDescription = "WiFi") },
-                        label = null
+                        icon = { Icon(painterResource(R.drawable.ic_wifi), contentDescription = null) },
+                        label = { Text("WiFi") }
                     )
                     NavigationBarItem(
                         selected = screen == 0 && selectedTab == 4,
                         onClick = { screen = 0; selectedTab = 4 },
-                        icon = { Icon(painterResource(R.drawable.ic_nfc), contentDescription = "NFC") },
-                        label = null
+                        icon = { Icon(painterResource(R.drawable.ic_nfc), contentDescription = null) },
+                        label = { Text("NFC") }
                     )
                     NavigationBarItem(
                         selected = screen == 1,
                         onClick = { screen = 1 },
-                        icon = { Icon(Icons.Filled.Settings, contentDescription = "Réglages") },
-                        label = null
+                        icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
+                        label = { Text("Réglages") }
                     )
                 }
             }
@@ -737,9 +764,9 @@ fun ScannerScreen() {
                                     .padding(horizontal = 16.dp, vertical = 8.dp)
                             )
                             Text(
-                                "📡 Scan : $progress/$progressTotal adresses (${
+                                "📡 Scan en cours… ${
                                     if (progressTotal > 0) (progress * 100 / progressTotal) else 0
-                                }%)",
+                                } %",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(horizontal = 16.dp)
@@ -807,13 +834,18 @@ fun ScannerScreen() {
                                     boxStatus = boxStatus,
                                     boxDevices = boxDevices,
                                     onAuthorizeBox = {
-                                        val box = BoxManager.detect(context)
-                                        if (box is FreeboxBoxClient) {
-                                            box.requestAuthorization()
-                                            scope.launch {
-                                                snackbar.showSnackbar(
-                                                    "Autorisation envoyée — valide-la sur la box, puis rescanne."
-                                                )
+                                        // detect() (lecture ARP/OUI) + requestAuthorization()
+                                        // (requête réseau) hors thread UI, sinon
+                                        // NetworkOnMainThreadException.
+                                        scope.launch(Dispatchers.IO) {
+                                            val box = BoxManager.detect(context)
+                                            if (box is FreeboxBoxClient) {
+                                                box.requestAuthorization()
+                                                withContext(Dispatchers.Main) {
+                                                    snackbar.showSnackbar(
+                                                        "Autorisation envoyée — valide-la sur la box, puis rescanne."
+                                                    )
+                                                }
                                             }
                                         }
                                     },
@@ -827,6 +859,8 @@ fun ScannerScreen() {
                                                 if (ok) {
                                                     blockedMacs = if (blocked) blockedMacs - device.mac
                                                     else blockedMacs + device.mac
+                                                    context.getSharedPreferences("scan_prefs", Context.MODE_PRIVATE)
+                                                        .edit().putStringSet("blocked_macs", blockedMacs).apply()
                                                     snackbar.showSnackbar(
                                                         if (blocked) "✅ ${device.name.ifBlank { device.ip }} débloqué"
                                                         else "⛔ ${device.name.ifBlank { device.ip }} bloqué — accès coupé"
@@ -1153,9 +1187,7 @@ private fun SearchFilterBar(
         OutlinedTextField(
             value = query,
             onValueChange = onQueryChange,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(44.dp),
+            modifier = Modifier.fillMaxWidth(),
             placeholder = {
                 Text("Rechercher…", style = MaterialTheme.typography.bodySmall)
             },
@@ -1269,7 +1301,7 @@ private fun ScanButton(
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    if (progressTotal > 0) "Scan $progress/$progressTotal"
+                    if (progressTotal > 0) "Scan ${progress * 100 / progressTotal} %"
                     else "Scan en cours…"
                 )
             } else {
@@ -1425,7 +1457,10 @@ private fun BoxDevicesSection(
                     }
                 }
                 if (boxName != null) {
-                    IconButton(onClick = { renaming = true }) {
+                    IconButton(
+                        onClick = { renaming = true },
+                        modifier = Modifier.semantics { contentDescription = "Renommer la box" }
+                    ) {
                         Text("✏️", style = MaterialTheme.typography.titleSmall)
                     }
                 }
@@ -1483,20 +1518,19 @@ private fun BoxDevicesSection(
                                     color = MaterialTheme.colorScheme.primary
                                 )
                             }
-                            IconButton(onClick = { confirmBlock = d }) {
+                            IconButton(
+                                onClick = { confirmBlock = d },
+                                modifier = Modifier.semantics {
+                                    contentDescription =
+                                        if (d.mac in blockedMacs) "Débloquer l'appareil" else "Bloquer l'appareil"
+                                }
+                            ) {
                                 Text(
                                     if (d.mac in blockedMacs) "✅" else "⛔",
                                     style = MaterialTheme.typography.titleSmall
                                 )
                             }
                         }
-                    }
-                    if (devices.size > 10) {
-                        Text(
-                            "…et ${devices.size - 10} autres (bande défilante ci-dessous)",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                     }
                 }
             }
@@ -1810,7 +1844,12 @@ private fun DeviceCard(
                 }
                 if (device.ports.isNotEmpty()) {
                     Spacer(Modifier.height(4.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    // FlowRow : les pastilles de ports passent à la ligne au lieu
+                    // de déborder hors écran en mode « ports élargi » (jusqu'à 52).
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
                         device.ports.sorted().forEach { p ->
                             Pill(
                                 text = ":$p",
@@ -1838,7 +1877,13 @@ private fun DeviceCard(
                         else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                IconButton(onClick = onToggleTrust) {
+                IconButton(
+                    onClick = onToggleTrust,
+                    modifier = Modifier.semantics {
+                        contentDescription =
+                            if (isTrusted) "Retirer de la confiance" else "Marquer comme de confiance"
+                    }
+                ) {
                     Text(
                         if (isTrusted) "✅" else "➕",
                         style = MaterialTheme.typography.titleSmall
@@ -1974,15 +2019,28 @@ private fun DeviceDetailScreen(
     val snackbar = remember { SnackbarHostState() }
     val clipboard = LocalClipboardManager.current
     val key = ScanHistory.identityKey(device)
-    val presenceTimestamps = remember(key) {
-        runCatching { PresenceHistoryStore(context).load()[key] ?: emptyList() }
-            .getOrDefault(emptyList())
+    // Historique de présence chargé hors thread UI (le fichier peut être gros) :
+    // la section « Présence » apparaît quand la valeur arrive.
+    var presenceTimestamps by remember(key) { mutableStateOf<List<Long>>(emptyList()) }
+    LaunchedEffect(key) {
+        presenceTimestamps = withContext(Dispatchers.IO) {
+            runCatching { PresenceHistoryStore(context).load()[key] ?: emptyList() }
+                .getOrDefault(emptyList())
+        }
     }
     var customName by remember { mutableStateOf(store.customName(key)) }
     var isFav by remember { mutableStateOf(store.isFavorite(key)) }
     val wolAvailable = device.mac.isNotBlank()
     val name = deviceDisplayName(device, store.customName(key))
     val hasWeb = device.ports.any { it == 80 || it == 443 || it == 8080 }
+
+    // Bouton/geste retour système : sauvegarde le nom personnalisé saisi et
+    // revient à la liste (comme le bouton « ← Retour »), au lieu de quitter l'app.
+    BackHandler {
+        store.setCustomName(key, customName)
+        onSaved()
+        onDismiss()
+    }
 
     Scaffold(
         topBar = {
@@ -2008,7 +2066,13 @@ private fun DeviceDetailScreen(
                             else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    IconButton(onClick = onToggleTrust) {
+                    IconButton(
+                        onClick = onToggleTrust,
+                        modifier = Modifier.semantics {
+                            contentDescription =
+                                if (isTrusted) "Retirer de la confiance" else "Marquer comme de confiance"
+                        }
+                    ) {
                         Text(
                             if (isTrusted) "✅" else "➕",
                             style = MaterialTheme.typography.titleSmall
@@ -2062,9 +2126,8 @@ private fun DeviceDetailScreen(
                 }
                 if (hasWeb) {
                     FilledTonalButton(onClick = {
-                        val scheme = if (443 in device.ports) "https" else "http"
                         context.startActivity(
-                            Intent(Intent.ACTION_VIEW, Uri.parse("$scheme://${device.ip}"))
+                            Intent(Intent.ACTION_VIEW, Uri.parse(deviceWebUrl(device)))
                         )
                     }) { Text("Ouvrir web") }
                 }
@@ -2186,9 +2249,8 @@ private fun DeviceDetailScreen(
                     )
                     Spacer(Modifier.height(8.dp))
                     FilledTonalButton(onClick = {
-                        val scheme = if (443 in device.ports) "https" else "http"
                         context.startActivity(
-                            Intent(Intent.ACTION_VIEW, Uri.parse("$scheme://${device.ip}"))
+                            Intent(Intent.ACTION_VIEW, Uri.parse(deviceWebUrl(device)))
                         )
                     }) { Text("🔗 Ouvrir") }
                     Text(
@@ -2467,6 +2529,25 @@ private fun highestRiskLabel(vulnsByIp: Map<String, VulnScanner.DeviceVulns>): S
     return order.firstOrNull { it in present }
 }
 
+/**
+ * URL web d'un appareil, en tenant compte du port réellement ouvert :
+ * 443/8443 → https, sinon http ; le port non standard (8080/8443) est inclus
+ * dans l'URL. Évite d'ouvrir http://ip (port 80) pour un appareil dont seul
+ * 8080 est exposé.
+ */
+private fun deviceWebUrl(device: Device): String {
+    val port = when {
+        443 in device.ports -> 443
+        80 in device.ports -> 80
+        8443 in device.ports -> 8443
+        8080 in device.ports -> 8080
+        else -> 80
+    }
+    val scheme = if (port == 443 || port == 8443) "https" else "http"
+    val host = if (port == 80 || port == 443) device.ip else "${device.ip}:$port"
+    return "$scheme://$host"
+}
+
 /** Ping ICMP (binaire système, comme le moteur) — hors thread UI. */
 private suspend fun ping(ip: String): Pair<Boolean, Int?> =
     withContext(Dispatchers.IO) {
@@ -2527,6 +2608,10 @@ private fun exportPdf(
         ssid = ssid
     )
     val uri = PdfAuditReport.generateAndShareUri(context, data)
+    if (uri == null) {
+        Toast.makeText(context, "Échec de génération du rapport PDF.", Toast.LENGTH_LONG).show()
+        return
+    }
     val intent = Intent(Intent.ACTION_SEND).apply {
         type = "application/pdf"
         putExtra(Intent.EXTRA_STREAM, uri)

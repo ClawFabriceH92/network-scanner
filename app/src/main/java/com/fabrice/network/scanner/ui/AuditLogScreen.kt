@@ -19,6 +19,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,6 +37,8 @@ import com.fabrice.network.scanner.AuditLog
 import com.fabrice.network.scanner.AuditLogStore
 import com.fabrice.network.scanner.BuildConfig
 import com.fabrice.network.scanner.ui.theme.LocalMonoTextStyle
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
@@ -48,7 +51,12 @@ fun AuditLogScreen() {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val store = remember { AuditLogStore(context) }
-    var events by remember { mutableStateOf(store.load()) }
+    // Chargé hors thread UI (jusqu'à 500 entrées JSON à parser) → pas de jank
+    // à l'ouverture de l'écran.
+    var events by remember { mutableStateOf<List<AuditLog.Event>>(emptyList()) }
+    LaunchedEffect(Unit) {
+        events = withContext(Dispatchers.IO) { store.load() }
+    }
 
     Column(Modifier.fillMaxSize()) {
         Row(

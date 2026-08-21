@@ -45,17 +45,14 @@ object CveUpdateManager {
      * @return la base chargée, ou null en cas d'échec (réseau, parse…).
      */
     fun update(context: Context): CveDatabase? {
+        var conn: HttpURLConnection? = null
         return try {
-            val conn = URL(RAW_URL).openConnection() as HttpURLConnection
+            conn = URL(RAW_URL).openConnection() as HttpURLConnection
             conn.connectTimeout = 10_000
             conn.readTimeout = 20_000
             conn.setRequestProperty("User-Agent", "NetworkScanner/1.0")
-            if (conn.responseCode != 200) {
-                conn.disconnect()
-                return null
-            }
+            if (conn.responseCode != 200) return null
             val text = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-            conn.disconnect()
             // Validation : le parse doit réussir et la base ne doit pas être vide
             val db = CveDatabase.load(text)
             if (db.allCount == 0) return null
@@ -63,6 +60,8 @@ object CveUpdateManager {
             db
         } catch (e: Exception) {
             null
+        } finally {
+            conn?.disconnect()
         }
     }
 

@@ -143,19 +143,22 @@ class FreeboxBoxClient(private val context: Context) : BoxClient {
             val arr = d.optJSONArray("result") ?: return@withContext null
             val out = mutableListOf<BoxClient.BoxDevice>()
             for (i in 0 until arr.length()) {
-                val e = arr.getJSONObject(i)
+                // Parsing défensif (optJSONObject ?: continue) : un firmware ou
+                // une réponse inattendue ne doit pas lever de JSONException non
+                // rattrapée hors du withContext (cf. BboxBoxClient.parseDevices).
+                val e = arr.optJSONObject(i) ?: continue
                 val name = e.optString("name", "")
                 var mac = ""
                 e.optJSONArray("l2ident")?.let { ids ->
                     for (j in 0 until ids.length()) {
-                        val id = ids.getJSONObject(j).optString("id", "")
+                        val id = ids.optJSONObject(j)?.optString("id", "") ?: ""
                         if (id.contains(":")) { mac = id; break }
                     }
                 }
                 var ip = ""
                 e.optJSONArray("l3connectivity")?.let { conns ->
                     for (j in 0 until conns.length()) {
-                        val ipv4 = conns.getJSONObject(j).optString("ipv4", "")
+                        val ipv4 = conns.optJSONObject(j)?.optString("ipv4", "") ?: ""
                         if (ipv4.count { it == '.' } == 3) { ip = ipv4; break }
                     }
                 }
@@ -166,7 +169,7 @@ class FreeboxBoxClient(private val context: Context) : BoxClient {
                 var connectionType: String? = null
                 e.optJSONArray("interfaces")?.let { ifs ->
                     for (j in 0 until ifs.length()) {
-                        when (ifs.getJSONObject(j).optString("type", "").lowercase()) {
+                        when (ifs.optJSONObject(j)?.optString("type", "")?.lowercase()) {
                             "ethernet", "eth", "wired" -> { connectionType = "Ethernet"; break }
                             "wifi", "wireless", "wlan" -> { connectionType = "WiFi"; break }
                         }

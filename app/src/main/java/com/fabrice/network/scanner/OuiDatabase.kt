@@ -8,8 +8,10 @@ import android.content.Context
  */
 object OuiDatabase {
 
+    @Volatile
     private var map: Map<String, String>? = null
 
+    @Synchronized
     fun load(context: Context): Map<String, String> {
         map?.let { return it }
         val m = HashMap<String, String>()

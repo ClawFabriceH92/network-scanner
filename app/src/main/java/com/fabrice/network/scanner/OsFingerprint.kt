@@ -40,7 +40,7 @@ object OsFingerprint {
         return when {
             s.contains("microsoft-iis") || s.contains("microsoft-httpapi") -> "Windows Server"
             s.contains("synology") || s.contains("thttpd") -> "Synology DSM"
-            s.contains("ubuntu") || s.contains("debian") && s.contains("openssh") -> "Linux"
+            (s.contains("ubuntu") || s.contains("debian")) && s.contains("openssh") -> "Linux"
             s.contains("openssh_for_windows") -> "Windows (OpenSSH)"
             s.contains("raspbian") || s.contains("raspberry") -> "Raspberry Pi (Linux)"
             s.contains("dropbear") -> "Routeur (Dropbear)"
@@ -65,12 +65,13 @@ object OsFingerprint {
                 h.contains("fedora") -> "Linux"
             h.contains("esp32") || h.contains("esp_") || h.contains("shelly") ||
                 h.contains("tuya") || h.contains("tasmota") -> "IoT (ESP)"
-            h.contains("freebox") || h.contains("livebox") || h.contains("box") ||
+            h.contains("freebox") || h.contains("livebox") || h.contains("bbox") ||
                 h.contains("router") || h.contains("routeur") -> "Box / routeur"
             h.contains("printer") || h.contains("imprimante") || h.contains("canon") ||
                 h.contains("hp ") || h.contains("epson") -> "Imprimante"
-            h.contains("tv") || h.contains("television") || h.contains("bravia") ||
-                h.contains("samsung") -> "TV / Media"
+            // Pas de "samsung" nu (téléphones/imprimantes Samsung) : exiger un
+            // indice TV réel.
+            h.contains("tv") || h.contains("television") || h.contains("bravia") -> "TV / Media"
             h.contains("cam") || h.contains("camera") || h.contains("webcam") -> "Caméra"
             else -> null
         }

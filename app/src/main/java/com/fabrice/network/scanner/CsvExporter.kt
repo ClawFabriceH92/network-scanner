@@ -41,11 +41,18 @@ object CsvExporter {
         }
     }
 
-    /** Échappe un champ CSV (guillemets si contient ; " ou retour ligne). */
+    /**
+     * Échappe un champ CSV. Neutralise d'abord l'injection de formule (un champ
+     * réseau non fiable — hostname, SNMP, fabricant — commençant par = + - @ est
+     * interprété comme une formule par Excel/LibreOffice) en le préfixant d'une
+     * apostrophe, puis applique le quoting standard (; " retours ligne).
+     */
     private fun csv(value: String): String {
-        if (value.contains(';') || value.contains('"') || value.contains('\n') || value.contains('\r')) {
-            return "\"" + value.replace("\"", "\"\"") + "\""
+        val safe = if (value.isNotEmpty() && value.first() in charArrayOf('=', '+', '-', '@'))
+            "'$value" else value
+        if (safe.contains(';') || safe.contains('"') || safe.contains('\n') || safe.contains('\r')) {
+            return "\"" + safe.replace("\"", "\"\"") + "\""
         }
-        return value
+        return safe
     }
 }

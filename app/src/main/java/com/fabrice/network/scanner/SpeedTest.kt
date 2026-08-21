@@ -1,6 +1,5 @@
 package com.fabrice.network.scanner
 
-import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.TimeUnit
@@ -43,18 +42,19 @@ object SpeedTest {
             conn.connectTimeout = 5_000
             conn.readTimeout = 20_000
             conn.setRequestProperty("User-Agent", "NetworkScanner/0.2.5")
+            var received = 0L
             conn.inputStream.use { input ->
-                val buf = ByteArrayOutputStream()
                 val buffer = ByteArray(64 * 1024)
                 while (true) {
                     val n = input.read(buffer)
                     if (n < 0) break
-                    buf.write(buffer, 0, n)
+                    received += n
                 }
             }
             val elapsedSec = (System.nanoTime() - start).toDouble() / 1e9
-            if (elapsedSec <= 0) return 0.0
-            return (bytes.toDouble() * 8) / elapsedSec / 1_000_000.0
+            if (elapsedSec <= 0 || received <= 0) return 0.0
+            // Débit basé sur les octets RÉELLEMENT reçus, sans buffer intermédiaire.
+            return (received.toDouble() * 8) / elapsedSec / 1_000_000.0
         } catch (e: Exception) {
             return -1.0
         } finally {

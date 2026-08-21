@@ -60,15 +60,19 @@ object WifiVulnAnalyzer {
         }
         // Heuristique SSID : réseau public / portail captif (FON, hotspot…)
         if (isPublicSsid(ssid)) {
-            if (score < 60) { score = 60; label = "Élevé" }
+            if (score < 60) score = 60
             risks.add("Réseau public/portail captif")
         }
         // Heuristique SSID : nom par défaut du constructeur
         if (isDefaultSsid(ssid)) {
-            if (score < 20) { score = 20; label = "Faible" }
+            if (score < 20) score = 20
             risks.add("SSID par défaut")
         }
-        return WifiVuln(score.coerceAtMost(100), label, risks.distinct())
+        // Libellé dérivé d'UNE seule source (le score final) → texte et couleur
+        // du badge cohérents avec labelForScore et la rampe UI (plus de « 50 /
+        // Modéré » sur fond « Élevé »).
+        val finalScore = score.coerceAtMost(100)
+        return WifiVuln(finalScore, labelForScore(finalScore), risks.distinct())
     }
 
     /** SSID typique d'un réseau public / partagé / portail captif. */

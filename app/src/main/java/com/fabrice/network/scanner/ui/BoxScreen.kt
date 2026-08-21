@@ -39,8 +39,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.fabrice.network.scanner.BoxBandwidth
 import com.fabrice.network.scanner.BoxClient
@@ -80,10 +83,11 @@ fun BoxScreen() {
     var passwordDraft by remember { mutableStateOf("") }
 
     fun fetchAll() {
-        val box = BoxManager.detect(context)
-        client = box
         scope.launch {
             loading = true
+            // detect() lit /proc/net/arp + la base OUI → hors thread UI.
+            val box = withContext(Dispatchers.IO) { BoxManager.detect(context) }
+            client = box
             withContext(Dispatchers.IO) {
                 if (box == null) {
                     connection = null; bandwidth = null; wifi = null; system = null; leases = null
@@ -367,6 +371,7 @@ private fun SettingsCard(
     onPasswordDraftChange: (String) -> Unit,
     onSaved: () -> Unit
 ) {
+    val scope = rememberCoroutineScope()
     Card(
         Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
@@ -386,6 +391,9 @@ private fun SettingsCard(
                         onValueChange = onPasswordDraftChange,
                         singleLine = true,
                         label = { Text("Mot de passe device") },
+                        // Masquage du credential + clavier mot de passe.
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(Modifier.height(8.dp))
@@ -400,8 +408,12 @@ private fun SettingsCard(
                         style = MaterialTheme.typography.labelMedium
                     )
                     Button(onClick = {
-                        client.requestAuthorization()
-                        onSaved()
+                        // requestAuthorization() fait un POST réseau → hors thread UI
+                        // (sinon NetworkOnMainThreadException).
+                        scope.launch(Dispatchers.IO) {
+                            client.requestAuthorization()
+                            withContext(Dispatchers.Main) { onSaved() }
+                        }
                     }) { Text("🔑 Ré-autoriser la box") }
                 }
                 else -> {

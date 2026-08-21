@@ -127,13 +127,15 @@ object NbnsResolver {
     }
 
     /**
-     * Bonus : MAC de l'adaptateur = 6 derniers octets du bloc de statistiques
-     * (après les entrées de noms). Best-effort, ignorée si nulle ou en FF.
+     * Bonus : MAC de l'adaptateur = UNIT_ID, soit les 6 PREMIERS octets du bloc
+     * de statistiques (RFC 1002 NODE STATUS RESPONSE), juste après les entrées de
+     * noms. Best-effort, ignorée si nulle ou en FF. (Les 6 DERNIERS octets sont
+     * des compteurs, pas la MAC.)
      */
     private fun extractAdapterMac(data: ByteArray, rdataStart: Int, rdlen: Int, nameCount: Int): String {
         val statsLen = rdlen - 1 - nameCount * 18
         if (statsLen < 6) return ""
-        val macStart = rdataStart + 1 + nameCount * 18 + statsLen - 6
+        val macStart = rdataStart + 1 + nameCount * 18
         val bytes = data.copyOfRange(macStart, macStart + 6)
         if (bytes.all { it == 0.toByte() } || bytes.all { it == 0xFF.toByte() }) return ""
         return bytes.joinToString(":") { "%02x".format(it.toInt() and 0xFF) }

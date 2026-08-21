@@ -23,7 +23,7 @@ object PermissionHelper {
 
     private var locationCb: ((Boolean) -> Unit)? = null
     private var notificationsCb: ((Boolean) -> Unit)? = null
-    private var bluetoothCb: ((Boolean) -> Unit)? = null
+    private var bluetoothCb: ((IntArray?) -> Unit)? = null
 
     fun has(activity: Activity, permission: String): Boolean =
         ContextCompat.checkSelfPermission(activity, permission) == PackageManager.PERMISSION_GRANTED
@@ -42,7 +42,15 @@ object PermissionHelper {
 
     /** Demande les permissions Bluetooth (scan + connect) + localisation. */
     fun requestBluetooth(activity: Activity, permissions: Array<String>, onResult: (Map<String, Boolean>) -> Unit) {
-        bluetoothCb = { granted -> onResult(permissions.associate { it to granted }) }
+        // Chaque permission est évaluée sur SON propre grantResult (et non sur
+        // le seul premier) : SCAN accordé mais CONNECT refusé doit rester refusé.
+        bluetoothCb = { res ->
+            onResult(
+                permissions.mapIndexed { i, p ->
+                    p to (res?.getOrNull(i) == PackageManager.PERMISSION_GRANTED)
+                }.toMap()
+            )
+        }
         ActivityCompat.requestPermissions(activity, permissions, RC_BLUETOOTH)
     }
 
@@ -52,7 +60,7 @@ object PermissionHelper {
         when (requestCode) {
             RC_LOCATION -> locationCb?.invoke(granted).also { locationCb = null }
             RC_NOTIFICATIONS -> notificationsCb?.invoke(granted).also { notificationsCb = null }
-            RC_BLUETOOTH -> bluetoothCb?.invoke(granted).also { bluetoothCb = null }
+            RC_BLUETOOTH -> bluetoothCb?.invoke(grantResults).also { bluetoothCb = null }
         }
     }
 }

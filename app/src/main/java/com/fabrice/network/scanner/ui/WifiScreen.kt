@@ -23,7 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -44,7 +44,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -56,6 +55,7 @@ import com.fabrice.network.scanner.WifiVulnAnalyzer
 import com.fabrice.network.scanner.ui.theme.LocalMonoTextStyle
 import com.fabrice.network.scanner.ui.theme.LocalScannerColors
 import com.fabrice.network.scanner.ui.theme.onColorFor
+import com.fabrice.network.scanner.ui.theme.riskColor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -260,7 +260,12 @@ fun WifiScreen() {
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(networks, key = { it.bssid.ifBlank { it.ssid } }) { net ->
+                // Clé unique par position : deux réseaux cachés (BSSID+SSID vides)
+                // ne doivent pas produire la même clé → sinon crash LazyColumn.
+                itemsIndexed(
+                    networks,
+                    key = { i, net -> "$i-${net.bssid}-${net.ssid}" }
+                ) { _, net ->
                     WifiNetworkCard(net, onClick = { selected = net })
                 }
             }
@@ -307,7 +312,8 @@ private fun PublicNetworkBanner(vuln: PublicWifiAnalyzer.PublicWifiVuln) {
 private fun WifiNetworkCard(net: WifiScanner.WifiNetwork, onClick: () -> Unit) {
     val vuln = WifiVulnAnalyzer.analyze(net.security, net.ssid)
     val semantic = LocalScannerColors.current
-    val scoreColor = scoreColor(vuln.score)
+    // Fond du badge dérivé du MÊME libellé que le texte (rampe cohérente).
+    val scoreColor = semantic.riskColor(vuln.label)
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -371,16 +377,6 @@ private fun WifiNetworkCard(net: WifiScanner.WifiNetwork, onClick: () -> Unit) {
 
 /** Couleur du score : vert <25, jaune <50, orange <75, rouge ≥75. */
 @Composable
-private fun scoreColor(score: Int): Color {
-    val semantic = LocalScannerColors.current
-    return when {
-        score < 25 -> semantic.riskNone
-        score < 50 -> semantic.riskModerate
-        score < 75 -> semantic.riskHigh
-        else -> semantic.riskCritical
-    }
-}
-
 /** Barre de signal RSSI (−100 → −40 dBm). */
 @Composable
 private fun RssiSignalBar(rssi: Int) {

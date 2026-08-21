@@ -123,7 +123,10 @@ class LiveboxBoxClient(private val context: Context) : BoxClient {
             val countXml = tr064("GetHostNumberOfEntries") ?: return@withContext null
             val count = parseHostCount(countXml)
             val out = mutableListOf<BoxClient.BoxDevice>()
-            for (i in 0 until count) {
+            // TR-064 (service Hosts:1) : NewIndex est 1-based, de 1 à count inclus.
+            // Un for (0 until count) rate le dernier hôte et gaspille une requête
+            // sur l'index 0 invalide.
+            for (i in 1..count) {
                 val entryXml = tr064("GetGenericHostEntry", "<NewIndex>$i</NewIndex>")
                     ?: continue
                 parseHostEntry(entryXml)?.let { out.add(it) }

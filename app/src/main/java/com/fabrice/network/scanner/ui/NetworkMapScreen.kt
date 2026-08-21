@@ -1,6 +1,7 @@
 package com.fabrice.network.scanner.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +28,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -130,7 +132,30 @@ fun NetworkMapScreen(
                 .horizontalScroll(rememberScrollState())
                 .verticalScroll(rememberScrollState())
         ) {
-            Canvas(Modifier.size(canvasDp)) {
+            Canvas(
+                Modifier
+                    .size(canvasDp)
+                    // Un tap sur un nœud (ou la passerelle) ouvre la fiche appareil.
+                    .pointerInput(alive, positions, gateway) {
+                        detectTapGestures { tap ->
+                            val hitR = nodeRadiusPx * 1.8f
+                            val idx = positions.indexOfFirst { p ->
+                                val dx = p.x - tap.x
+                                val dy = p.y - tap.y
+                                dx * dx + dy * dy <= hitR * hitR
+                            }
+                            if (idx >= 0) {
+                                onDeviceClick(alive[idx])
+                            } else if (gateway != null) {
+                                val dx = centerPx - tap.x
+                                val dy = centerPx - tap.y
+                                if (dx * dx + dy * dy <= gatewayRadiusPx * gatewayRadiusPx) {
+                                    onDeviceClick(gateway)
+                                }
+                            }
+                        }
+                    }
+            ) {
                 // Lignes passerelle → nœuds
                 alive.forEachIndexed { i, _ ->
                     drawLine(

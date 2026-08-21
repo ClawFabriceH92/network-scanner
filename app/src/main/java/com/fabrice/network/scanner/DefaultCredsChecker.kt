@@ -101,8 +101,20 @@ object DefaultCredsChecker {
 
     /** Comme [testBasicAuth] mais retourne le code HTTP (null si erreur réseau). */
     fun basicAuthStatus(ip: String, port: Int, user: String, pass: String, timeoutMs: Int = 1_500): Int? {
+        var conn: HttpURLConnection? = null
         return try {
-            val conn = URL("http://$ip:$port/").openConnection() as HttpURLConnection
+            // Schéma selon le port : 443/8443 → https (sinon la requête http vers
+            // un port TLS échoue et l'appareil n'est jamais réellement testé).
+            val scheme = if (port == 443 || port == 8443) "https" else "http"
+            conn = URL("$scheme://$ip:$port/").openConnection() as HttpURLConnection
+            if (conn is javax.net.ssl.HttpsURLConnection) {
+                // Équipements LAN (caméras/routeurs) : certificats auto-signés
+                // fréquents → validation permissive, limitée à ce scan LAN de nos
+                // propres équipements (jamais un endpoint Internet).
+                (conn as javax.net.ssl.HttpsURLConnection).sslSocketFactory = lanTrustAllFactory()
+                (conn as javax.net.ssl.HttpsURLConnection).hostnameVerifier =
+                    javax.net.ssl.HostnameVerifier { _, _ -> true }
+            }
             conn.instanceFollowRedirects = false
             conn.connectTimeout = timeoutMs
             conn.readTimeout = timeoutMs
@@ -111,12 +123,33 @@ object DefaultCredsChecker {
             val cred = "$user:$pass"
             val encoded = Base64.getEncoder().encodeToString(cred.toByteArray(Charsets.UTF_8))
             conn.setRequestProperty("Authorization", "Basic $encoded")
-            val code = conn.responseCode
-            conn.disconnect()
-            code
+            conn.responseCode
         } catch (e: Exception) {
             null
+        } finally {
+            conn?.disconnect()
         }
+    }
+
+    /**
+     * SSLSocketFactory permissive réservée au scan des équipements du réseau
+     * LOCAL de l'utilisateur (certificats auto-signés courants sur caméras/box).
+     * N'est jamais utilisée pour des connexions Internet.
+     */
+    @Volatile private var lanFactory: javax.net.ssl.SSLSocketFactory? = null
+
+    private fun lanTrustAllFactory(): javax.net.ssl.SSLSocketFactory {
+        lanFactory?.let { return it }
+        val trustAll = arrayOf<javax.net.ssl.TrustManager>(
+            object : javax.net.ssl.X509TrustManager {
+                override fun checkClientTrusted(chain: Array<out java.security.cert.X509Certificate>?, authType: String?) {}
+                override fun checkServerTrusted(chain: Array<out java.security.cert.X509Certificate>?, authType: String?) {}
+                override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = arrayOf()
+            }
+        )
+        val ctx = javax.net.ssl.SSLContext.getInstance("TLS")
+        ctx.init(null, trustAll, java.security.SecureRandom())
+        return ctx.socketFactory.also { lanFactory = it }
     }
 
     /**

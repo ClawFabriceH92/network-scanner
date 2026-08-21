@@ -2,6 +2,9 @@ package com.fabrice.network.scanner
 
 import android.content.Context
 import java.security.MessageDigest
+import java.security.SecureRandom
+import javax.crypto.SecretKeyFactory
+import javax.crypto.spec.PBEKeySpec
 
 /**
  * Verrouillage de l'app (v1.9.0) : PIN 4 chiffres (hash SHA-256, JAMAIS en
@@ -41,15 +44,54 @@ object AppLock {
         fun isLocked(nowMs: Long): Boolean = remainingMs(nowMs) > 0L
     }
 
-    /** Hash SHA-256 hexadécimal du PIN. */
+    /**
+     * Hash SHA-256 hexadécimal du PIN (format HÉRITÉ, non salé). Conservé pour
+     * vérifier les PIN stockés par les anciennes versions ; les nouveaux PIN
+     * utilisent [newHash] (PBKDF2 salé). Ne plus utiliser pour stocker un PIN.
+     */
     fun hashPin(pin: String): String =
         MessageDigest.getInstance("SHA-256")
             .digest(pin.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
 
-    /** Comparaison d'un PIN saisi contre le hash stocké. */
-    fun matches(pin: String, storedHash: String): Boolean =
-        storedHash.isNotBlank() && hashPin(pin) == storedHash
+    /** Préfixe des hachages salés PBKDF2 : "pbkdf2:<selHex>:<hashHex>". */
+    private const val PBKDF2_PREFIX = "pbkdf2:"
+    private const val PBKDF2_ITERATIONS = 120_000
+    private const val PBKDF2_BITS = 256
+
+    /** Hash salé (PBKDF2-HMAC-SHA256, sel aléatoire par PIN) prêt à stocker. */
+    fun newHash(pin: String): String {
+        val salt = ByteArray(16).also { SecureRandom().nextBytes(it) }
+        return PBKDF2_PREFIX + toHex(salt) + ":" + pbkdf2Hex(pin, salt)
+    }
+
+    private fun pbkdf2Hex(pin: String, salt: ByteArray): String {
+        val spec = PBEKeySpec(pin.toCharArray(), salt, PBKDF2_ITERATIONS, PBKDF2_BITS)
+        val skf = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+        return toHex(skf.generateSecret(spec).encoded)
+    }
+
+    private fun toHex(bytes: ByteArray): String = bytes.joinToString("") { "%02x".format(it) }
+
+    private fun fromHex(s: String): ByteArray =
+        ByteArray(s.length / 2) { ((Character.digit(s[it * 2], 16) shl 4) + Character.digit(s[it * 2 + 1], 16)).toByte() }
+
+    /**
+     * Compare un PIN saisi au hash stocké. Accepte le format salé PBKDF2 ET le
+     * format hérité SHA-256 (migré au prochain déverrouillage réussi, cf. verify).
+     */
+    fun matches(pin: String, storedHash: String): Boolean {
+        if (storedHash.isBlank()) return false
+        return if (storedHash.startsWith(PBKDF2_PREFIX)) {
+            val parts = storedHash.removePrefix(PBKDF2_PREFIX).split(":")
+            if (parts.size != 2) return false
+            val salt = runCatching { fromHex(parts[0]) }.getOrNull() ?: return false
+            pbkdf2Hex(pin, salt) == parts[1]
+        } else {
+            // Format hérité (SHA-256 non salé) des versions antérieures.
+            hashPin(pin) == storedHash
+        }
+    }
 
     // --- Persistance SharedPreferences (Android) ---
 
@@ -60,11 +102,11 @@ object AppLock {
     fun isEnabled(context: Context): Boolean =
         prefs(context).getString(KEY_PIN_HASH, null).orEmpty().isNotBlank()
 
-    /** Configure (ou remplace) le PIN. Stocke uniquement le hash SHA-256. */
+    /** Configure (ou remplace) le PIN. Stocke uniquement un hash salé PBKDF2. */
     fun setPin(context: Context, pin: String) {
         if (pin.isBlank()) return
         prefs(context).edit()
-            .putString(KEY_PIN_HASH, hashPin(pin))
+            .putString(KEY_PIN_HASH, newHash(pin))
             .putInt(KEY_ATTEMPTS, 0)
             .putLong(KEY_LOCKED_UNTIL, 0L)
             .apply()
@@ -95,7 +137,11 @@ object AppLock {
         if (state.isLocked(nowMs)) return VerifyResult.Locked(state.remainingMs(nowMs))
         if (matches(pin, stored)) {
             val s = state.onSuccess()
-            p.edit().putInt(KEY_ATTEMPTS, s.count).putLong(KEY_LOCKED_UNTIL, s.lockedUntil).apply()
+            val edit = p.edit().putInt(KEY_ATTEMPTS, s.count).putLong(KEY_LOCKED_UNTIL, s.lockedUntil)
+            // Migration transparente : un PIN encore au format hérité (SHA-256) est
+            // re-haché en PBKDF2 salé au premier déverrouillage réussi.
+            if (!stored.startsWith(PBKDF2_PREFIX)) edit.putString(KEY_PIN_HASH, newHash(pin))
+            edit.apply()
             return VerifyResult.Success
         }
         val s = state.onFailure(nowMs)

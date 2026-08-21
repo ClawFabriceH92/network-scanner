@@ -77,8 +77,7 @@ object DeviceType {
         return when {
             // Imprimante : JetDirect 9100, IPP 631, LPD 515
             (9100 in s || 515 in s) -> "Imprimante"
-            // NAS Synology : 5000/5001 (DSM), 6690 ; QNAP : 8080/443
-            (5000 in s || 5001 in s) && (vendor.contains("synology", true)) -> "NAS"
+            // NAS Synology DSM : 5000/5001 (QNAP réutilise 8080/443, non distinctifs)
             5000 in s || 5001 in s -> "NAS"
             // Caméra IP : RTSP 554
             554 in s -> "Caméra"
