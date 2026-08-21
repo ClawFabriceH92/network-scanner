@@ -64,3 +64,10 @@ le tag git `backup/v1.9.3-pre-improvements`.
 - PIN de verrouillage : hachage salé PBKDF2 (migration transparente des anciens
   PIN) + exclusion des sauvegardes.
 - Export CSV : neutralisation de l'injection de formules.
+
+**Nettoyage**
+- Système de mise à jour unifié : les deux piles d'auto-update concurrentes
+  (double appel à l'API GitHub au lancement, deux BroadcastReceiver, deux canaux
+  de notification) sont fusionnées en une seule ; suppression de la boucle de
+  sondage quotidienne (réveil process toutes les 30 s) au profit d'une simple
+  vérification au lancement.
