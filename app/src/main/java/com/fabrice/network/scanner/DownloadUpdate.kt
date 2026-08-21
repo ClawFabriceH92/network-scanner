@@ -28,11 +28,8 @@ object DownloadUpdate {
     const val PREFS = "update_prefs"
     const val KEY_DOWNLOAD_ID = "download_id"
     const val CHANNEL_ID = "updates"
-    // Fichier + id de notif DISTINCTS de la pile update/AutoUpdater (qui utilise
-    // « network-scanner-update.apk » et l'id 1001) : évite qu'un téléchargement
-    // manuel et un téléchargement auto s'écrasent le même fichier / la même notif.
-    const val FILE_NAME = "network-scanner-update-manual.apk"
-    const val NOTIF_ID = 1002
+    const val FILE_NAME = "network-scanner-update.apk"
+    const val NOTIF_ID = 1001
 
     /** Lance le téléchargement de [url] et mémorise l'id pour le receiver. */
     fun start(context: Context, url: String): Long {
