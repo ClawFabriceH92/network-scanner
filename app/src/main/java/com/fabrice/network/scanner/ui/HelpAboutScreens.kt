@@ -17,6 +17,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -116,6 +118,7 @@ fun AboutScreen(
     updateDownloading: Boolean,
     onCheckUpdate: () -> Unit,
     onDownloadUpdate: () -> Unit,
+    onDownloadLatest: () -> Unit = {},
     onOpenTimeline: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -175,6 +178,7 @@ fun AboutScreen(
         Spacer(Modifier.height(4.dp))
         Text("Mise à jour", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
         UpdateSection(
+            onDownloadLatest = onDownloadLatest,
             updateInfo = updateInfo,
             updateStatus = updateStatus,
             updateChecking = updateChecking,
@@ -228,7 +232,8 @@ private fun UpdateSection(
     updateChecking: Boolean,
     updateDownloading: Boolean,
     onCheckUpdate: () -> Unit,
-    onDownloadUpdate: () -> Unit
+    onDownloadUpdate: () -> Unit,
+    onDownloadLatest: () -> Unit = {}
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -263,6 +268,18 @@ private fun UpdateSection(
                     else Text("Installer v${updateInfo.version}")
                 }
             }
+            HorizontalDivider()
+            // Téléchargement DIRECT de la dernière version (lien stable) — marche
+            // même si la vérification n'a rien détecté.
+            OutlinedButton(onClick = onDownloadLatest, enabled = !updateDownloading) {
+                Text("⬇️ Télécharger la dernière version (APK)")
+            }
+            Text(
+                "Télécharge directement l'APK de la dernière version depuis GitHub, " +
+                    "puis lance l'installation.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

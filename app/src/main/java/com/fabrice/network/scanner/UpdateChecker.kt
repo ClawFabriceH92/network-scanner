@@ -18,6 +18,15 @@ object UpdateChecker {
     const val RELEASES_URL =
         "https://api.github.com/repos/ClawFabriceH92/network-scanner/releases?per_page=5"
 
+    /**
+     * Lien DIRECT et STABLE vers l'APK de la dernière version : la release
+     * rolling `latest` contient une copie de l'APK sous un nom fixe
+     * (`network-scanner-latest.apk`). Permet un bouton « Télécharger » qui marche
+     * toujours, sans dépendre de la comparaison de versions.
+     */
+    const val LATEST_APK_URL =
+        "https://github.com/ClawFabriceH92/network-scanner/releases/download/latest/network-scanner-latest.apk"
+
     /** Version disponible + URL de téléchargement de l'APK. */
     data class UpdateInfo(val version: String, val url: String)
 

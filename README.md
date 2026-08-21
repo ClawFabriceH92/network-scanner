@@ -23,6 +23,12 @@ détectés : box Freebox, PC, appareils Xiaomi/HP, Synology…).
 
 ## Changelog
 
+### v1.9.7 — bouton de téléchargement direct
+- Réglages → un bouton **« Télécharger la dernière version (APK) »** télécharge
+  directement l'APK le plus récent (lien stable `network-scanner-latest.apk` de
+  la release `latest`), indépendamment de la vérification de version. La CI
+  publie désormais aussi l'APK sous ce nom fixe.
+
 ### v1.9.6 — correctif détection des mises à jour
 - **Auto-update** : l'app lit désormais le numéro de version dans le **nom de
   l'APK** (`network-scanner-vX.Y.Z.apk`) quand le tag de la release n'est pas un

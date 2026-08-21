@@ -499,6 +499,17 @@ fun ScannerScreen() {
         }
     }
 
+    // Téléchargement DIRECT de la dernière version (lien stable), indépendant de
+    // la vérification : marche toujours, même si l'app se croit à jour.
+    fun downloadLatestDirect() {
+        scope.launch {
+            updateDownloading = true
+            updateStatus = "⬇️ Téléchargement de la dernière version… (suis la notification)"
+            withContext(Dispatchers.IO) { DownloadUpdate.start(context, UpdateChecker.LATEST_APK_URL) }
+            updateDownloading = false
+        }
+    }
+
     // Check auto silencieux au lancement (ne pollue pas l'UI).
     LaunchedEffect(Unit) { checkAppUpdate(silent = true) }
 
@@ -732,6 +743,7 @@ fun ScannerScreen() {
                     updateDownloading = updateDownloading,
                     onCheckUpdate = { checkAppUpdate(silent = false) },
                     onDownloadUpdate = { downloadAppUpdate() },
+                    onDownloadLatest = { downloadLatestDirect() },
                     onOpenTimeline = { screen = 4 }
                 )
             } else if (screen == 2) {
@@ -742,6 +754,7 @@ fun ScannerScreen() {
                     updateDownloading = updateDownloading,
                     onCheckUpdate = { checkAppUpdate(silent = false) },
                     onDownloadUpdate = { downloadAppUpdate() },
+                    onDownloadLatest = { downloadLatestDirect() },
                     onOpenTimeline = { screen = 4 }
                 )
             } else if (screen == 3) {
