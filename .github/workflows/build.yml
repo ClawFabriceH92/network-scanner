@@ -59,9 +59,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          # Copie sous un nom FIXE pour un lien de téléchargement direct stable
+          # (bouton « Télécharger la dernière version » dans l'app).
+          cp "network-scanner-v${VERSION}.apk" "network-scanner-latest.apk"
           gh release delete latest --yes --repo "${{ github.repository }}" 2>/dev/null || true
           for i in 1 2 3 4 5; do
-            if gh release create latest "network-scanner-v${{ steps.version.outputs.VERSION }}.apk" \
+            if gh release create latest \
+              "network-scanner-v${VERSION}.apk" \
+              "network-scanner-latest.apk" \
               --title "Latest build" \
               --notes "APK le plus récent — build automatique du push sur main." \
               --repo "${{ github.repository }}"; then
