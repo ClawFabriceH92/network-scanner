@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -1768,6 +1769,7 @@ private fun CveBanner(
 }
 
 /** Carte appareil : icône type + point de statut, nom, IP mono, fabricant, favori. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun DeviceCard(
     device: Device,

@@ -375,8 +375,6 @@ private fun WifiNetworkCard(net: WifiScanner.WifiNetwork, onClick: () -> Unit) {
     }
 }
 
-/** Couleur du score : vert <25, jaune <50, orange <75, rouge ≥75. */
-@Composable
 /** Barre de signal RSSI (−100 → −40 dBm). */
 @Composable
 private fun RssiSignalBar(rssi: Int) {
