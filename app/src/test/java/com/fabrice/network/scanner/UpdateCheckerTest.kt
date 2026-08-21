@@ -98,6 +98,32 @@ class UpdateCheckerTest {
     }
 
     @Test
+    fun parseReleases_derivesVersionFromApkNameWhenTagNotNumeric() {
+        // Release rolling « latest » : le tag n'est pas un numéro, la version
+        // doit être lue dans le nom de l'APK.
+        val json = """
+            [
+              {"tag_name":"latest","draft":false,"assets":[
+                {"name":"network-scanner-v1.9.5.apk","browser_download_url":"https://example.com/latest.apk"}
+              ]}
+            ]
+        """.trimIndent()
+        val info = UpdateChecker.parseReleases(json, "1.9.4")
+        assertEquals("1.9.5", info!!.version)
+        assertEquals("https://example.com/latest.apk", info.url)
+        // Déjà à jour → null.
+        assertNull(UpdateChecker.parseReleases(json, "1.9.5"))
+    }
+
+    @Test
+    fun versionFrom_extractsFromTagOrApkName() {
+        assertEquals("1.9.5", UpdateChecker.versionFrom("network-scanner-v1.9.5.apk"))
+        assertEquals("1.9.5", UpdateChecker.versionFrom("1.9.5"))
+        assertEquals("1.6", UpdateChecker.versionFrom("v1.6"))
+        assertNull(UpdateChecker.versionFrom("latest"))
+    }
+
+    @Test
     fun parseReleases_upToDateReturnsNull() {
         val json = """
             [

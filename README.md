@@ -23,6 +23,13 @@ détectés : box Freebox, PC, appareils Xiaomi/HP, Synology…).
 
 ## Changelog
 
+### v1.9.6 — correctif détection des mises à jour
+- **Auto-update** : l'app lit désormais le numéro de version dans le **nom de
+  l'APK** (`network-scanner-vX.Y.Z.apk`) quand le tag de la release n'est pas un
+  numéro. La release rolling `latest` (mise à jour à chaque build) est enfin
+  détectée — avant, son tag `latest` était interprété comme version 0, donc
+  l'app affichait toujours « à jour ».
+
 ### v1.9.5 — finitions interface
 - **Barre de navigation** : les libellés « Bluetooth »/« Réglages » ne passent
   plus à la ligne. Le libellé n'est affiché que sur l'onglet actif (icône seule
