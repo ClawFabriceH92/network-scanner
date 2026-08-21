@@ -66,21 +66,28 @@ object UpdateChecker {
             for (i in 0 until arr.length()) {
                 val rel = arr.optJSONObject(i) ?: continue
                 if (rel.optBoolean("draft", false)) continue
-                val tag = rel.optString("tag_name", "").removePrefix("v").trim()
-                if (tag.isBlank()) continue
                 val assets = rel.optJSONArray("assets") ?: continue
                 var apkUrl: String? = null
+                var apkName = ""
                 for (j in 0 until assets.length()) {
                     val a = assets.optJSONObject(j) ?: continue
-                    if (a.optString("name", "").endsWith(".apk")) {
+                    val name = a.optString("name", "")
+                    if (name.endsWith(".apk")) {
                         apkUrl = a.optString("browser_download_url", "")
+                        apkName = name
                         if (apkUrl.isNotBlank()) break
                     }
                 }
                 if (apkUrl.isNullOrBlank()) continue
-                if (shouldUpdate(currentVersion, tag)) {
-                    if (best == null || shouldUpdate(best.version, tag)) {
-                        best = UpdateInfo(tag, apkUrl)
+                // Version : depuis le tag s'il est numérique (releases « vX.Y.Z »),
+                // sinon depuis le NOM de l'APK (release rolling « latest » dont le
+                // tag n'est pas un numéro : network-scanner-vX.Y.Z.apk). Sans
+                // version exploitable, la release est ignorée.
+                val tag = rel.optString("tag_name", "").removePrefix("v").trim()
+                val version = versionFrom(tag) ?: versionFrom(apkName) ?: continue
+                if (shouldUpdate(currentVersion, version)) {
+                    if (best == null || shouldUpdate(best.version, version)) {
+                        best = UpdateInfo(version, apkUrl)
                     }
                 }
             }
@@ -89,6 +96,14 @@ object UpdateChecker {
             null
         }
     }
+
+    /**
+     * Extrait un numéro de version (« 1.9.5 ») d'une chaîne — tag (« v1.9.5 »,
+     * « 1.9.5 ») ou nom d'APK (« network-scanner-v1.9.5.apk ») — ou null si
+     * aucune séquence de type X.Y(.Z…) n'est trouvée (ex. tag « latest »).
+     */
+    fun versionFrom(s: String): String? =
+        Regex("\\d+(?:\\.\\d+)+").find(s)?.value
 
     /**
      * Comparaison de versions segment par segment (Int), PAS lexicale :
