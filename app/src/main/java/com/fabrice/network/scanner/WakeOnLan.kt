@@ -41,6 +41,11 @@ object WakeOnLan {
         val packet = magicPacket(mac) ?: return false
         return try {
             DatagramSocket().use { socket ->
+                // SO_BROADCAST est requis pour émettre vers une adresse de
+                // broadcast (255.255.255.255 ou broadcast de sous-réseau) :
+                // sans ce flag, Android/Linux lève une SocketException (EACCES)
+                // et le magic packet n'est jamais envoyé.
+                socket.broadcast = true
                 socket.send(DatagramPacket(packet, packet.size, InetAddress.getByName(broadcastIp), port))
             }
             true

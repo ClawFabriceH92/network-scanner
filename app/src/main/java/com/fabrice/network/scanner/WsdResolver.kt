@@ -66,6 +66,19 @@ object WsdResolver {
         return try {
             val factory = javax.xml.parsers.DocumentBuilderFactory.newInstance()
             factory.isNamespaceAware = true
+            // Durcissement : le XML provient de paquets UDP LAN non fiables
+            // (239.255.255.250:3702). Interdire tout DOCTYPE neutralise d'un coup
+            // le « billion laughs » (expansion d'entités) et les XXE.
+            runCatching {
+                factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+            }
+            runCatching {
+                factory.setFeature("http://xml.org/sax/features/external-general-entities", false)
+            }
+            runCatching {
+                factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false)
+            }
+            factory.isExpandEntityReferences = false
             val builder = factory.newDocumentBuilder()
             val doc = builder.parse(org.xml.sax.InputSource(java.io.StringReader(xml)))
 

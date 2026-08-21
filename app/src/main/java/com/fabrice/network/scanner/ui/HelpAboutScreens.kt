@@ -240,7 +240,9 @@ private fun UpdateSection(
                 if (updateChecking) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp
+                        strokeWidth = 2.dp,
+                        // Contraste sur le fond primary du bouton (sinon invisible).
+                        color = MaterialTheme.colorScheme.onPrimary
                     )
                     Spacer(Modifier.width(8.dp))
                     Text("Vérification…")

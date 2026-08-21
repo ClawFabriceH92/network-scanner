@@ -67,29 +67,36 @@ object SmbShareScanner {
         val config = SmbConfig.builder()
             .withTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
             .build()
+        // SMBClient est Closeable (ConnectionTable + event bus) : scanShares est
+        // appelé par hôte (jusqu'à ~254 par scan), donc on ferme TOUJOURS le
+        // client — pas seulement la connexion — via un try/finally englobant.
         val client = SMBClient(config)
-        val connection = try {
-            client.connect(host, 445)
-        } catch (e: Exception) {
-            return emptyList() // pas de SMB joignable (port fermé / filtré)
-        }
-        val session = try {
-            // Authentification invité (guest) : domaine vide, user "guest"
-            connection.authenticate(AuthenticationContext.guest())
-        } catch (e: Exception) {
-            runCatching { connection.close() }
-            return emptyList()
-        }
-        val found = mutableListOf<SmbShare>()
         try {
-            DEFAULT_SHARES.forEach { shareName ->
-                val result = probeShare(session, shareName, timeoutMs)
-                if (result != null) found.add(result)
+            val connection = try {
+                client.connect(host, 445)
+            } catch (e: Exception) {
+                return emptyList() // pas de SMB joignable (port fermé / filtré)
             }
+            val session = try {
+                // Authentification invité (guest) : domaine vide, user "guest"
+                connection.authenticate(AuthenticationContext.guest())
+            } catch (e: Exception) {
+                runCatching { connection.close() }
+                return emptyList()
+            }
+            val found = mutableListOf<SmbShare>()
+            try {
+                DEFAULT_SHARES.forEach { shareName ->
+                    val result = probeShare(session, shareName, timeoutMs)
+                    if (result != null) found.add(result)
+                }
+            } finally {
+                runCatching { connection.close() }
+            }
+            return found.sortedWith(compareByDescending<SmbShare> { it.accessible }.thenBy { it.name })
         } finally {
-            runCatching { connection.close() }
+            runCatching { client.close() }
         }
-        return found.sortedWith(compareByDescending<SmbShare> { it.accessible }.thenBy { it.name })
     }
 
     /** Teste un partage : accessible (listable) ou protégé (refusé). */

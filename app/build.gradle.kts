@@ -68,8 +68,8 @@ android {
         applicationId = "com.fabrice.network.scanner"
         minSdk = 26
         targetSdk = 35
-        versionCode = 32
-        versionName = "1.9.3"
+        versionCode = 33
+        versionName = "1.9.4"
     }
 
     signingConfigs {
@@ -107,6 +107,14 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    lint {
+        // Le test des credentials par défaut interroge des équipements du réseau
+        // LOCAL (caméras/box à certificats auto-signés) avec une validation TLS
+        // permissive VOLONTAIRE, jamais vers Internet — on désactive donc ces
+        // deux règles pour ces appels de scan LAN maîtrisés.
+        disable += listOf("TrustAllX509TrustManager", "BadHostnameVerifier")
     }
 
     packaging {

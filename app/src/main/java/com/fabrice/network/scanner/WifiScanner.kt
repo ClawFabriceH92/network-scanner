@@ -112,9 +112,16 @@ object WifiScanner {
         val ctx = context.applicationContext
         val wifi = ctx.getSystemService(Context.WIFI_SERVICE) as WifiManager
         unregister(ctx)
+        // `delivered` garantit UN seul appel à onResults (broadcast OU timeout) ;
+        // `receiver === this/r` garantit qu'un timeout périmé ne touche pas un
+        // scan plus récent.
+        var delivered = false
         val r = object : BroadcastReceiver() {
             override fun onReceive(c: Context?, intent: Intent?) {
-                if (intent?.action == WifiManager.SCAN_RESULTS_AVAILABLE_ACTION) {
+                if (intent?.action == WifiManager.SCAN_RESULTS_AVAILABLE_ACTION &&
+                    receiver === this && !delivered
+                ) {
+                    delivered = true
                     unregister(ctx)
                     onResults(readResults(wifi))
                 }
@@ -126,7 +133,13 @@ object WifiScanner {
         }
         runCatching { wifi.startScan() }
         Handler(Looper.getMainLooper()).postDelayed({
-            unregister(ctx)
+            if (receiver === r && !delivered) {
+                // Timeout : livre une liste vide (sinon le spinner de l'UI reste
+                // bloqué à l'infini si aucun broadcast n'arrive).
+                delivered = true
+                unregister(ctx)
+                onResults(emptyList())
+            }
         }, timeoutMs)
     }
 

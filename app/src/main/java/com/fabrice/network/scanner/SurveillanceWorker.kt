@@ -45,7 +45,9 @@ class SurveillanceWorker(context: Context, params: WorkerParameters) :
             val fresh = ScanHistory.detectNewDevices(previous, devices, trusted)
 
             // ⚠️ Pas de notification au tout premier scan (historique vide).
-            if (fresh.isNotEmpty() && previous.isNotEmpty()) {
+            // Respecte le même réglage « alertes nouveaux appareils » que le
+            // premier plan (sinon le toggle OFF est contourné en arrière-plan).
+            if (fresh.isNotEmpty() && previous.isNotEmpty() && NewDeviceNotifier.isEnabled(ctx)) {
                 notifyNewDevices(ctx, fresh)
                 AppLog.i("Surveillance", "${fresh.size} nouvel(aux) appareil(s) → notification")
             }

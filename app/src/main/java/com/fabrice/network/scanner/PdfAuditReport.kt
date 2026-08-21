@@ -125,31 +125,65 @@ object PdfAuditReport {
     }
 
     /**
-     * Génère le PDF et retourne son URI (partageable via FileProvider).
+     * Génère le PDF (multi-pages) et retourne son URI partageable via
+     * FileProvider, ou null si le rendu/l'écriture a échoué (disque plein…) :
+     * on ne partage jamais un PDF vide/corrompu silencieusement.
      */
-    fun generateAndShareUri(context: Context, data: AuditData): Uri {
+    fun generateAndShareUri(context: Context, data: AuditData): Uri? {
         val doc = PdfDocument()
-        val page = doc.startPage(PdfDocument.PageInfo.Builder(595, 842, 1).create()) // A4
-        val canvas = page.canvas
-        drawReport(canvas, data)
-        doc.finishPage(page)
+        try {
+            drawReport(doc, data)
+        } catch (e: Exception) {
+            runCatching { doc.close() }
+            return null
+        }
 
         val dir = File(context.filesDir, "exports").apply { mkdirs() }
         val file = File(dir, "audit_reseau_v${BuildConfig.VERSION_NAME}_${System.currentTimeMillis()}.pdf")
-        runCatching {
+        val written = runCatching {
             file.outputStream().use { doc.writeTo(it) }
-        }
+        }.isSuccess
         doc.close()
+        if (!written || !file.exists() || file.length() == 0L) return null
 
         return FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
     }
 
-    /** Dessine le rapport complet sur la page A4. */
-    private fun drawReport(canvas: Canvas, data: AuditData) {
-        val w = 595f
+    /**
+     * Dessine le rapport complet, en paginant automatiquement (A4 595×842) :
+     * dès que le contenu atteint le bas de page, une nouvelle page est ouverte —
+     * la section Vulnérabilités et le pied de page ne sont plus perdus sur les
+     * grands réseaux.
+     */
+    private fun drawReport(doc: PdfDocument, data: AuditData) {
         val margin = 40f
-        val contentW = w - 2 * margin
+        val contentW = 595f - 2 * margin
+        val contentBottom = 795f
+
+        var pageNum = 1
+        var page = doc.startPage(PdfDocument.PageInfo.Builder(595, 842, pageNum).create())
+        var canvas = page.canvas
         var y = 50f
+
+        val footerPaint = Paint().apply { textSize = 8f; color = Color.rgb(160, 160, 160) }
+        fun drawFooter() {
+            canvas.drawText(
+                "NetworkScanner v${BuildConfig.VERSION_NAME} — scan passif, données locales · page $pageNum",
+                margin, 822f, footerPaint
+            )
+        }
+        fun newPage() {
+            drawFooter()
+            doc.finishPage(page)
+            pageNum++
+            page = doc.startPage(PdfDocument.PageInfo.Builder(595, 842, pageNum).create())
+            canvas = page.canvas
+            y = 50f
+        }
+        // Ouvre une nouvelle page si `needed` px ne tiennent pas avant le bas.
+        fun ensureSpace(needed: Float) {
+            if (y + needed > contentBottom) newPage()
+        }
 
         // --- En-tête ---
         val title = Paint().apply {
@@ -164,7 +198,7 @@ object PdfAuditReport {
         canvas.drawText("Généré le ${data.generatedAt}", margin, y, sub)
         val ssidPart = if (data.ssid.isNotBlank()) " · SSID : ${data.ssid}" else ""
         canvas.drawText(
-            "Réseau : ${data.selfIp}${if (data.networkCidr.isNotBlank()) " ($data.networkCidr)" else ""}$ssidPart",
+            "Réseau : ${data.selfIp}${if (data.networkCidr.isNotBlank()) " (${data.networkCidr})" else ""}$ssidPart",
             margin, y + 14f, sub
         )
         canvas.drawText("NetworkScanner v${BuildConfig.VERSION_NAME}", margin, y + 28f, sub)
@@ -194,6 +228,7 @@ object PdfAuditReport {
             y = drawSectionHeader(canvas, "Recommandations hiérarchisées", margin, contentW, y)
             val recoPaint = Paint().apply { textSize = 10f; color = Color.rgb(40, 40, 40) }
             recos.forEachIndexed { i, r ->
+                ensureSpace(18f)
                 drawWrapped(canvas, "${i + 1}. $r", margin, y + 12f, recoPaint, contentW, 15f)
                 y += 18f
             }
@@ -201,19 +236,28 @@ object PdfAuditReport {
         }
 
         // --- Appareils ---
+        ensureSpace(46f)
         y = drawSectionHeader(canvas, "Appareils détectés", margin, contentW, y)
         val headerPaint = Paint().apply { textSize = 9f; isFakeBoldText = true; color = Color.WHITE }
         val rowPaint = Paint().apply { textSize = 9f; color = Color.rgb(40, 40, 40) }
         val altPaint = Paint().apply { textSize = 9f; color = Color.rgb(60, 60, 60) }
-        val colWidths = floatArrayOf(85f, 105f, 95f, 95f, 80f, 80f, contentW - 540f)
+        // Somme des 6 largeurs fixes (456) < contentW (515) → colonne Services
+        // positive (≈59) et dans la page (findings PDF largeur).
+        val colWidths = floatArrayOf(78f, 96f, 82f, 82f, 66f, 52f, contentW - 456f)
         val colNames = arrayOf("IP", "MAC", "Fabricant", "Modèle", "Système", "Statut", "Services")
         val rowH = 16f
 
-        // Ligne d'en-tête
-        drawRow(canvas, margin, y, colWidths, colNames.map { it }, headerPaint, Color.rgb(27, 58, 107), rowH, contentW)
-        y += rowH
+        fun drawTableHeader() {
+            drawRow(canvas, margin, y, colWidths, colNames.toList(), headerPaint, Color.rgb(27, 58, 107), rowH, contentW)
+            y += rowH
+        }
+        drawTableHeader()
 
         data.devices.forEachIndexed { i, d ->
+            if (y + rowH > contentBottom) {
+                newPage()
+                drawTableHeader() // répète l'en-tête de tableau sur la nouvelle page
+            }
             val statut = if (d.alive) "En ligne" else "ARP"
             val services = d.ports.take(6).joinToString(", ") { PortScanner.serviceName(it) }
             val modele = d.product.ifBlank { d.model }
@@ -225,16 +269,17 @@ object PdfAuditReport {
                 if (i % 2 == 0) rowPaint else altPaint, bg, rowH, contentW
             )
             y += rowH
-            if (y > 760) return // page pleine, on coupe proprement
         }
         y += 16f
 
         // --- Vulnérabilités ---
         if (data.devices.any { data.vulnsByIp[it.ip]?.let { v -> !v.isEmpty } == true }) {
+            ensureSpace(40f)
             y = drawSectionHeader(canvas, "Vulnérabilités détectées", margin, contentW, y)
             data.devices.forEach { d ->
                 val v = data.vulnsByIp[d.ip]
                 if (v != null && !v.isEmpty) {
+                    ensureSpace(14f)
                     val p = Paint().apply { textSize = 9f; color = Color.rgb(40, 40, 40) }
                     canvas.drawText(
                         "• ${d.hostname.ifBlank { d.ip }} — ${v.label} (${v.score}/100)" +
@@ -243,23 +288,24 @@ object PdfAuditReport {
                     )
                     y += 14f
                     v.cves.take(3).forEach { cve ->
+                        ensureSpace(12f)
                         val c = Paint().apply { textSize = 8f; color = sevColor(cve.severity) }
                         canvas.drawText("    ${cve.id} [${cve.severity}] — ${cve.description.take(70)}", margin, y, c)
                         y += 12f
                     }
                     if (v.cves.size > 3) {
+                        ensureSpace(12f)
                         val more = Paint().apply { textSize = 8f; color = Color.rgb(120, 120, 120) }
                         canvas.drawText("    +${v.cves.size - 3} autres…", margin, y, more)
                         y += 12f
                     }
-                    if (y > 760) return
                 }
             }
         }
 
-        // --- Pied de page ---
-        val footer = Paint().apply { textSize = 8f; color = Color.rgb(160, 160, 160) }
-        canvas.drawText("NetworkScanner v${BuildConfig.VERSION_NAME} — scan passif, données locales uniquement", margin, 810f, footer)
+        // --- Pied de page de la dernière page + finalisation ---
+        drawFooter()
+        doc.finishPage(page)
     }
 
     private fun drawSectionHeader(canvas: Canvas, title: String, margin: Float, contentW: Float, y: Float): Float {

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -28,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.fabrice.network.scanner.ScheduleStore
 import com.fabrice.network.scanner.ui.theme.LocalMonoTextStyle
@@ -260,6 +262,7 @@ private fun HourFields(
             value = hour,
             onValueChange = { onHour(it.filter(Char::isDigit).take(2)) },
             singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             modifier = Modifier.width(64.dp)
         )
         Text(":", modifier = Modifier.padding(horizontal = 4.dp))
@@ -267,6 +270,7 @@ private fun HourFields(
             value = minute,
             onValueChange = { onMinute(it.filter(Char::isDigit).take(2)) },
             singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             modifier = Modifier.width(64.dp)
         )
     }

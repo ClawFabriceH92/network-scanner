@@ -138,7 +138,6 @@ object VulnScanner {
      */
     fun match(services: List<Service>, db: CveDatabase, defaultCred: String? = null): DeviceVulns {
         val hits = LinkedHashMap<String, CveEntry>()
-        var kevOnlyProductLevel = 0
 
         services.forEach { svc ->
             val entries = db.entriesFor(svc.product)
@@ -147,11 +146,8 @@ object VulnScanner {
                 // KEV produit-level (sans range) : alerte dès que le produit
                 // est détecté — c'est l'exploitation active, le plus important.
                 val productLevelOnly = cve.ranges.isEmpty() && (cve.kev || svc.version == null)
-                if (versionHit) {
+                if (versionHit || productLevelOnly) {
                     hits[cve.id] = cve
-                } else if (productLevelOnly) {
-                    hits[cve.id] = cve
-                    kevOnlyProductLevel++
                 }
             }
         }

@@ -106,7 +106,8 @@ fun NetworkScreen() {
         Spacer(Modifier.height(4.dp))
 
         // --- Qualité Wi-Fi + test réseau (déplacé depuis l'onglet Périphériques) ---
-        NetworkPanel()
+        // RSSI partagé (une seule boucle de sondage dans NetworkScreen).
+        NetworkPanel(rssi = rssi)
 
         Spacer(Modifier.height(8.dp))
 
@@ -274,9 +275,10 @@ private fun RssiGraph(history: List<Pair<Long, Int>>, modifier: Modifier = Modif
         val w = size.width
         val h = size.height
 
-        // Fond quadrillé (palier -50 / -70 / -90)
+        // Fond quadrillé (palier -50 / -70 / -90) — même normalisation que yOf
+        // (échelle -100..-40 dBm inversée), sinon les lignes tombent hors du canvas.
         listOf(-50, -70, -90).forEach { level ->
-            val y = ((level - -100f) / (-40f)) * h
+            val y = h - ((level + 100f) / 60f) * h
             drawLine(gridColor, Offset(0f, y), Offset(w, y), strokeWidth = 1f)
         }
 

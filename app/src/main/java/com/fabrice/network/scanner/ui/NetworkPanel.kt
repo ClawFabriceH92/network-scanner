@@ -40,31 +40,25 @@ import com.fabrice.network.scanner.SpeedTest
 import com.fabrice.network.scanner.WifiQuality
 import com.fabrice.network.scanner.ui.theme.LocalMonoTextStyle
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Panneau « Réseau » : qualité Wi-Fi en temps réel (barre RSSI qui réagit
  * aux déplacements) + test de vitesse (download / upload / latence).
  */
 @Composable
-fun NetworkPanel() {
+fun NetworkPanel(rssi: Int) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var rssi by remember { mutableStateOf(Int.MIN_VALUE) }
     var testing by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<SpeedTest.Result?>(null) }
     var testError by remember { mutableStateOf(false) }
     var historyTick by remember { mutableStateOf(0) }
 
-    // Rafraîchit le RSSI toutes les 2 s — la barre bouge quand on se déplace
-    LaunchedEffect(Unit) {
-        while (true) {
-            rssi = WifiQuality.currentRssi(context)
-            delay(2_000)
-        }
-    }
+    // Le RSSI est fourni par NetworkScreen (une seule boucle de sondage pour
+    // toute la vue) — évite deux sondages RSSI concurrents toutes les 2 s.
 
     fun runTest() {
         scope.launch(Dispatchers.IO) {
@@ -162,8 +156,11 @@ fun NetworkPanel() {
                 }
             }
 
-            // --- Historique des débits (v1.9.0) ---
-            val history = remember(historyTick) { SpeedHistoryStore.load(context) }
+            // --- Historique des débits (v1.9.0) — chargé hors thread UI ---
+            var history by remember { mutableStateOf<List<SpeedHistoryStore.Entry>>(emptyList()) }
+            LaunchedEffect(historyTick) {
+                history = withContext(Dispatchers.IO) { SpeedHistoryStore.load(context) }
+            }
             if (history.isNotEmpty()) {
                 Spacer(Modifier.height(16.dp))
                 SpeedHistorySection(history)

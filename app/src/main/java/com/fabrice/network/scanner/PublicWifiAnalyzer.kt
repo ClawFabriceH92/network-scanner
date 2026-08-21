@@ -145,22 +145,28 @@ object PublicWifiAnalyzer {
     }
 
     private fun httpFetch(timeoutMs: Int): PortalFetch? {
+        var conn: HttpURLConnection? = null
         return try {
-            val conn = URL(CHECK_URL).openConnection() as HttpURLConnection
-            conn.instanceFollowRedirects = true
+            conn = URL(CHECK_URL).openConnection() as HttpURLConnection
+            // Ne PAS suivre les redirections : la cible du portail est dans
+            // l'en-tête Location (conn.url renvoie toujours l'URL d'origine, et
+            // HttpURLConnection ne suit pas les redirections http→https).
+            conn.instanceFollowRedirects = false
             conn.connectTimeout = timeoutMs
             conn.readTimeout = timeoutMs
             conn.setRequestProperty("User-Agent", "NetworkScanner/1.0")
             val code = conn.responseCode
-            val finalUrl = conn.url?.toString()
+            val location = conn.getHeaderField("Location")
+            val finalUrl = location?.takeIf { it.isNotBlank() }
             val body = if (code == 200) {
                 runCatching { conn.inputStream.bufferedReader().use { it.readText() } }
                     .getOrDefault("")
             } else ""
-            conn.disconnect()
             PortalFetch(code, finalUrl, body)
         } catch (e: Exception) {
             null
+        } finally {
+            conn?.disconnect()
         }
     }
 }

@@ -65,17 +65,22 @@ object DownloadUpdate {
 
     /** Installe l'APK [file] via FileProvider (ACTION_VIEW package-archive). */
     fun installApk(context: Context, file: File) {
-        val uri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            file
-        )
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "application/vnd.android.package-archive")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        // try/catch : appelé depuis un BroadcastReceiver — une exception
+        // (ActivityNotFound / FileProvider) ne doit jamais s'échapper de onReceive
+        // et faire planter le process.
+        runCatching {
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                file
+            )
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
         }
-        context.startActivity(intent)
     }
 
     /** Notification « autorise l'installation » avec action vers les réglages. */

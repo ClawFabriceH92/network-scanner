@@ -43,10 +43,13 @@ object BoxManager {
     }
 
     /** Client sélectionné pour la box actuelle (null si non reconnue). */
+    @Volatile
     private var cachedClient: BoxClient? = null
+    @Volatile
     private var cachedGateway: String = ""
 
     /** Détecte et retourne le client box adapté (ou null). */
+    @Synchronized
     fun detect(context: Context): BoxClient? {
         val gateway = NetworkInfoProvider.readGateway()
         if (gateway.isBlank()) return null
@@ -82,6 +85,7 @@ object BoxManager {
         return client
     }
 
+    @Synchronized
     fun reset() {
         cachedClient = null
         cachedGateway = ""

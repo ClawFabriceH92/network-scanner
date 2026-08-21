@@ -204,13 +204,18 @@ object NetworkScanner {
         // d'ordre seulement — la couverture finale est identique (mêmes lectures).
         val earlyArp = if (scanFast) readArp() else emptyMap<String, String>()
 
+        // Progression = nombre d'ADRESSES sondées (pas d'appareils trouvés), sur
+        // les 2 vagues cumulées → la barre avance réellement de 0 à 100 %.
+        val totalProbes = hosts.size * 2
+        val probed = java.util.concurrent.atomic.AtomicInteger(0)
+
         fun pingSweep() {
             // 2 vagues : la 2e rattrape les appareils lents/endormis (1re réponse
-            // souvent perdue). Le compteur progresse à chaque vague.
+            // souvent perdue).
             repeat(2) { wave ->
                 val executor = Executors.newFixedThreadPool(64)
                 try {
-                    hosts.forEachIndexed { index, host ->
+                    hosts.forEach { host ->
                         executor.execute {
                             val r = pingHost(host)
                             if (r.alive) {
@@ -218,15 +223,19 @@ object NetworkScanner {
                                 if (r.ttl != null) ttlMap[host] = r.ttl
                                 if (r.latencyMs != null) latencyMap[host] = r.latencyMs
                             }
-                            if (index % 64 == 0 || index == hosts.size - 1) {
-                                onProgress(alive.size, hosts.size)
+                            val done = probed.incrementAndGet()
+                            if (done % 32 == 0 || done == totalProbes) {
+                                onProgress(done, totalProbes)
                             }
                         }
                     }
                     executor.shutdown()
                     executor.awaitTermination(120, TimeUnit.SECONDS)
                 } finally {
-                    if (!executor.isShutdown) executor.shutdownNow()
+                    // isTerminated (et non isShutdown, déjà vrai après shutdown()) :
+                    // si awaitTermination expire, on force réellement l'arrêt des
+                    // threads de ping encore actifs.
+                    if (!executor.isTerminated) executor.shutdownNow()
                 }
                 if (wave == 0) {
                     // Laisse les réponses lentes arriver avant la 2e vague.
@@ -488,10 +497,26 @@ object NetworkScanner {
         return if (v < 1) 1 else v.toInt()
     }
 
+    // Pool dédié (threads démons) pour borner chaque résolution PTR : sans nom
+    // inverse, InetAddress.getHostName() bloque plusieurs secondes (retries du
+    // resolver système). Multiplié par des dizaines d'IP en série, cela ajoutait
+    // des minutes au scan.
+    private val dnsExecutor = Executors.newCachedThreadPool { r ->
+        Thread(r, "revdns").apply { isDaemon = true }
+    }
+
     private fun reverseDns(host: String): String {
         return try {
-            val name = InetAddress.getByName(host).hostName ?: ""
-            if (name == host) "" else name
+            val future = dnsExecutor.submit(java.util.concurrent.Callable {
+                val name = InetAddress.getByName(host).hostName ?: ""
+                if (name == host) "" else name
+            })
+            try {
+                future.get(700, TimeUnit.MILLISECONDS)
+            } catch (e: Exception) {
+                future.cancel(true)
+                ""
+            }
         } catch (e: Exception) {
             ""
         }

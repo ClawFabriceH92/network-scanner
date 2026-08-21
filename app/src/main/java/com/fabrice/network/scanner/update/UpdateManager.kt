@@ -1,38 +1,35 @@
 package com.fabrice.network.scanner.update
 
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.content.Context
-import android.content.Intent
-import android.content.SharedPreferences
-import android.content.pm.PackageManager
-import android.net.Uri
-import android.os.Build
-import android.provider.Settings
-import androidx.core.app.NotificationCompat
+import com.fabrice.network.scanner.DownloadUpdate
+import com.fabrice.network.scanner.UpdateChecker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.Calendar
 
 /**
- * Boucle de mise à jour automatique (pattern validé Vigie, générique).
- * - Vérification immédiate au lancement
- * - Puis créneau quotidien à 14h00 (boucle légère toutes les 30 s)
- * - Téléchargement auto si permission "installer des apps inconnues" OK,
- *   sinon notification avec action vers l'écran d'autorisation.
- * - Activable/désactivable via SharedPreferences ("autoUpdate", défaut true).
+ * Auto-update au lancement de l'application.
+ *
+ * Vérifie GitHub Releases une fois au démarrage ; si une version PLUS récente
+ * existe et que l'installation d'apps inconnues est autorisée, télécharge l'APK
+ * (DownloadManager) — sinon poste une notification invitant à autoriser
+ * l'installation. L'installation finale est gérée par [DownloadUpdate] et son
+ * BroadcastReceiver (`.UpdateReceiver`) à la fin du téléchargement.
+ *
+ * Système de mise à jour UNIQUE : partage le même vérificateur ([UpdateChecker])
+ * et le même téléchargeur ([DownloadUpdate]) que la vérification manuelle de
+ * l'écran Réglages — plus de double pile ni de double appel réseau au lancement.
+ *
+ * NB : plus de boucle de sondage quotidienne (elle ne se déclenchait quasiment
+ * jamais et réveillait le process toutes les 30 s). La vérification au
+ * lancement suffit pour ce type d'app ; l'UI permet un contrôle manuel.
  */
 object UpdateManager {
 
     private const val PREFS = "network-scannerupdate"
     private const val KEY_AUTO = "autoUpdate"
-    private const val CHANNEL_ID = "com.fabrice.network.scanner.updates"
-    private const val TAG = "Network ScannerUpdate"
 
     private var started = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -50,84 +47,22 @@ object UpdateManager {
         if (started) return
         started = true
         val appContext = context.applicationContext
-        ensureChannel(appContext)
-        scope.launch {
-            // Vérification immédiate au lancement
-            if (autoUpdateEnabled(appContext)) checkOnce(appContext)
-            while (isActive) {
-                val now = Calendar.getInstance()
-                if (autoUpdateEnabled(appContext) &&
-                    now.get(Calendar.HOUR_OF_DAY) == 14 && now.get(Calendar.MINUTE) == 0
-                ) {
-                    checkOnce(appContext)
-                    delay(61_000) // évite les doubles déclenchements dans la même minute
-                } else {
-                    delay(30_000)
-                }
-            }
-        }
+        if (autoUpdateEnabled(appContext)) checkOnce(appContext)
     }
 
-    /** Vérifie GitHub Releases et télécharge si une MAJ existe. Peut être appelé par un bouton "Vérifier maintenant". */
-    fun checkNow(context: Context) {
-        checkOnce(context.applicationContext)
-    }
+    /** Vérification manuelle « Vérifier maintenant » (auto-télécharge si possible). */
+    fun checkNow(context: Context) = checkOnce(context.applicationContext)
 
     private fun checkOnce(context: Context) {
         scope.launch {
-            val info = withContext(Dispatchers.IO) { UpdateChecker.latestWithApk() } ?: return@launch
-            val current = currentVersion(context)
-            if (UpdateChecker.compareVersions(info.versionName, current) <= 0) return@launch
-            if (AutoUpdater.canRequestInstalls(context)) {
-                AutoUpdater.download(context, info.downloadUrl)
+            // UpdateChecker.check() ne renvoie une info que si une version PLUS
+            // récente est disponible (comparaison numérique interne).
+            val info = withContext(Dispatchers.IO) { UpdateChecker.check() } ?: return@launch
+            if (context.packageManager.canRequestPackageInstalls()) {
+                withContext(Dispatchers.IO) { DownloadUpdate.start(context, info.url) }
             } else {
-                notifyPermissionNeeded(context, info)
+                DownloadUpdate.notifyPermissionNeeded(context)
             }
-        }
-    }
-
-    private fun currentVersion(context: Context): String = try {
-        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
-    } catch (_: PackageManager.NameNotFoundException) {
-        ""
-    }
-
-    private fun ensureChannel(context: Context) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.createNotificationChannel(
-            NotificationChannel(
-                CHANNEL_ID,
-                "Mises à jour",
-                NotificationManager.IMPORTANCE_HIGH,
-            ).apply { description = "Mises à jour automatiques de Network Scanner" }
-        )
-    }
-
-    /** Notification : MAJ dispo mais il faut d'abord autoriser l'installation. */
-    private fun notifyPermissionNeeded(context: Context, info: UpdateInfo) {
-        try {
-            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            val settingsIntent = Intent(
-                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                Uri.parse("package:${context.packageName}"),
-            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            val pi = android.app.PendingIntent.getActivity(
-                context,
-                0,
-                settingsIntent,
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
-            )
-            val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-                .setSmallIcon(android.R.drawable.stat_sys_download_done)
-                .setContentTitle("⬆ Mise à jour Network Scanner v${info.versionName} disponible")
-                .setContentText("Touchez pour autoriser l'installation, puis la mise à jour s'installera automatiquement.")
-                .setContentIntent(pi)
-                .setAutoCancel(true)
-                .build()
-            nm.notify(1001, notification)
-        } catch (_: Exception) {
-            // Notification impossible → on laisse tomber silencieusement
         }
     }
 }
