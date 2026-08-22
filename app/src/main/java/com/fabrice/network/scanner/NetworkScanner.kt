@@ -142,6 +142,15 @@ object NetworkScanner {
         return (o and 0x02) != 0
     }
 
+    /**
+     * Détecte un conteneur Docker à sa MAC : Docker attribue par défaut des
+     * adresses du préfixe 02:42:xx (bridge et macvlan). Ce bit « localement
+     * administré » les ferait passer pour des MAC aléatoires — on les
+     * reconnaît AVANT pour les étiqueter « Docker » plutôt qu'« Adresse privée ».
+     */
+    fun isDockerMac(mac: String): Boolean =
+        macPrefix(mac)?.startsWith("0242") == true
+
     /** Détecte l'IP locale + préfixe du réseau actif (Android). */
     fun detectSubnet(): Pair<String, Int>? {
         val interfaces = NetworkInterface.getNetworkInterfaces() ?: return null
@@ -194,6 +203,9 @@ object NetworkScanner {
         if (hosts.isEmpty()) return@withContext emptyList()
 
         val alive = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        // Hôtes découverts par sonde de vivacité TCP (filtrent l'ICMP mais
+        // exposent un port) : conteneurs Docker, serveurs/VM pare-feu, IoT.
+        val tcpAlive = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
         val ttlMap = java.util.concurrent.ConcurrentHashMap<String, Int>()
         val latencyMap = java.util.concurrent.ConcurrentHashMap<String, Int>()
         val broadcastIp = broadcastAddress(ip, prefix)
@@ -244,6 +256,30 @@ object NetworkScanner {
             }
         }
 
+        // Sonde de vivacité TCP : un hôte qui filtre l'ICMP (conteneur Docker,
+        // serveur/VM derrière un pare-feu, IoT) n'apparaît dans AUCUNE des
+        // découvertes existantes s'il n'a ni ARP récent ni service multicast.
+        // Une connexion TCP acceptée sur un port courant prouve qu'il est
+        // vivant — et déclenche au passage un échange ARP, donc la lecture ARP
+        // qui suit récupère sa MAC. Ignore les hôtes déjà trouvés par ping.
+        // Reporté en mode économie d'énergie (comme le scan de ports).
+        fun tcpLivenessSweep() {
+            if (!scanPorts || scanEconomy) return
+            val executor = Executors.newFixedThreadPool(128)
+            try {
+                hosts.forEach { host ->
+                    if (host in alive) return@forEach
+                    executor.execute {
+                        if (PortScanner.isAnyPortOpen(host)) tcpAlive.add(host)
+                    }
+                }
+                executor.shutdown()
+                executor.awaitTermination(60, TimeUnit.SECONDS)
+            } finally {
+                if (!executor.isTerminated) executor.shutdownNow()
+            }
+        }
+
         // Découverte multicast (UPnP/SSDP + mDNS + WS-Discovery + NetBIOS
         // broadcast) : le broadcast NetBIOS trouve les PC Windows qui filtrent
         // le ping et n'ont ni mDNS ni WSD actifs — leur IP n'était connue nulle part.
@@ -268,6 +304,9 @@ object NetworkScanner {
                 // Ordre historique : découvertes multicast d'abord, ping ensuite.
                 pingSweep()
             }
+            // Après le ping (avant les lectures ARP décalées ci-dessous) : la
+            // sonde TCP peuple la table ARP pour les hôtes ICMP-silencieux.
+            tcpLivenessSweep()
         }
 
         // Fusion ping + table ARP — TRIPLE lecture espacée : la table ARP
@@ -292,7 +331,7 @@ object NetworkScanner {
                 readArp()
             })
         }
-        val allIps = (alive + arp.keys + mdnsByIp.keys + wsdByIp.keys + upnpByIp.keys + nbnsByIp.keys).toSortedSet()
+        val allIps = (alive + tcpAlive + arp.keys + mdnsByIp.keys + wsdByIp.keys + upnpByIp.keys + nbnsByIp.keys).toSortedSet()
 
         // Cache en mémoire des fabricants résolus en ligne : évite d'interroger
         // deux fois le même préfixe OUI au cours d'un même scan.
@@ -306,8 +345,8 @@ object NetworkScanner {
             // Hôte « vivant » : a répondu au ping OU à une découverte multicast
             // (mDNS/WSD/UPnP) OU au broadcast NetBIOS. Un appareil qui répond
             // est forcément en ligne — il mérite le scan de ports et le statut.
-            val responded = alive.contains(host) || host in mdnsByIp ||
-                host in wsdByIp || host in upnpByIp || host in nbnsByIp
+            val responded = alive.contains(host) || tcpAlive.contains(host) ||
+                host in mdnsByIp || host in wsdByIp || host in upnpByIp || host in nbnsByIp
             val ports = if (scanPorts && responded) {
                 PortScanner.scanPorts(host, portsToScan)
             } else emptyList()
@@ -323,11 +362,18 @@ object NetworkScanner {
                 if (hostname.isBlank() && nbns.name.isNotBlank()) hostname = nbns.name
             }
 
-            // MAC localement administrée → fabricant « Adresse privée » et
-            // pas de requête en ligne (jamais présente dans la base OUI).
-            val randomized = isRandomizedMac(mac)
-            var vendor = if (randomized) "Adresse privée" else vendorFor(mac, oui)
-            if (!randomized && vendor.isBlank() && mac.isNotBlank()) {
+            // MAC Docker (02:42) → fabricant « Docker » : détecté AVANT le test
+            // « aléatoire » (le bit localement administré est aussi à 1 sur ces
+            // MAC) et jamais résolu en ligne (préfixe absent des bases OUI).
+            // Sinon MAC localement administrée → « Adresse privée ».
+            val docker = isDockerMac(mac)
+            val randomized = !docker && isRandomizedMac(mac)
+            var vendor = when {
+                docker -> "Docker"
+                randomized -> "Adresse privée"
+                else -> vendorFor(mac, oui)
+            }
+            if (!docker && !randomized && vendor.isBlank() && mac.isNotBlank()) {
                 vendor = VendorLookup.lookup(mac, vendorCache, prefs) ?: ""
             }
 

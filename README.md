@@ -23,6 +23,16 @@ détectés : box Freebox, PC, appareils Xiaomi/HP, Synology…).
 
 ## Changelog
 
+### v1.9.9 — détection des conteneurs Docker
+- **Sonde de vivacité TCP** : les hôtes qui filtrent l'ICMP (conteneurs Docker,
+  serveurs/VM derrière un pare-feu, IoT) sont désormais découverts via une
+  connexion TCP sur les ports courants (dont 3000/5000/8000/9000, typiques des
+  apps conteneurisées). Avant, un conteneur sans ping ni service multicast
+  n'apparaissait jamais dans la liste. La sonde peuple aussi la table ARP, donc
+  la MAC de ces hôtes est récupérée. Reporté en mode économie d'énergie.
+- **Reconnaissance Docker** : les MAC du préfixe `02:42` sont étiquetées
+  « Docker » (au lieu d'« Adresse privée ») et classées **Serveur / Conteneur** 🐳.
+
 ### v1.9.8 — nouvelle icône
 - **Icône de l'app redessinée** : fond bleu nuit en dégradé radial, balayage
   radar doré en fondu angulaire, aiguille or, anneaux fins et nœuds détectés.
