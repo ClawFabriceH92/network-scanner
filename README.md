@@ -23,6 +23,12 @@ détectés : box Freebox, PC, appareils Xiaomi/HP, Synology…).
 
 ## Changelog
 
+### v1.9.8 — nouvelle icône
+- **Icône de l'app redessinée** : fond bleu nuit en dégradé radial, balayage
+  radar doré en fondu angulaire, aiguille or, anneaux fins et nœuds détectés.
+  Variante monochrome (icône thématisée Android 13+) alignée sur le même
+  drawable.
+
 ### v1.9.7 — bouton de téléchargement direct
 - Réglages → un bouton **« Télécharger la dernière version (APK) »** télécharge
   directement l'APK le plus récent (lien stable `network-scanner-latest.apk` de
