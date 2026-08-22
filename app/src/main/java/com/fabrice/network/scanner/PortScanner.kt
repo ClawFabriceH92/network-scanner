@@ -85,6 +85,29 @@ object PortScanner {
     fun serviceName(port: Int): String =
         ALL_PORTS.firstOrNull { it.first == port }?.second ?: "port-$port"
 
+    /**
+     * Ports de « ping TCP » : sonde de vivacité pour les hôtes qui filtrent
+     * l'ICMP (conteneurs Docker, serveurs/VM pare-feu, IoT). Ciblés parce que
+     * très souvent exposés par un service : web (dont les ports typiques des
+     * apps conteneurisées : 3000/5000/8000/9000), admin distante, partages.
+     */
+    val TCP_PING_PORTS = listOf(
+        80, 443, 22, 8080, 8443, 445, 3389, 53,
+        3000, 5000, 8000, 9000
+    )
+
+    /**
+     * Vrai dès qu'AU MOINS un des ports est ouvert (court-circuite au premier
+     * succès). Sert de sonde de vivacité TCP : une connexion acceptée prouve
+     * que l'hôte est vivant même s'il ne répond pas au ping.
+     */
+    fun isAnyPortOpen(ip: String, ports: List<Int> = TCP_PING_PORTS, timeoutMs: Int = 300): Boolean {
+        for (port in ports) {
+            if (isPortOpen(ip, port, timeoutMs)) return true
+        }
+        return false
+    }
+
     /** Teste si un port TCP est ouvert sur une IP. */
     fun isPortOpen(ip: String, port: Int, timeoutMs: Int = 400): Boolean {
         return try {

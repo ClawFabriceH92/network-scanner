@@ -15,6 +15,10 @@ object DeviceType {
         os: String
     ): String {
         fromHostname(hostname)?.let { return it }
+        // Conteneur Docker (MAC 02:42, étiqueté « Docker ») : signal fort,
+        // prioritaire sur les heuristiques de ports génériques (un conteneur
+        // web ressemblerait sinon à un « Ordinateur »).
+        if (vendor.contains("docker", ignoreCase = true)) return "Serveur / Conteneur"
         fromPorts(ports, vendor)?.let { return it }
         fromVendor(vendor)?.let { return it }
         fromOs(os)?.let { return it }
@@ -35,6 +39,7 @@ object DeviceType {
         "Montre" -> "⌚"
         "Enceinte" -> "🔊"
         "IoT" -> "💡"
+        "Serveur / Conteneur" -> "🐳"
         else -> "❓"
     }
 
