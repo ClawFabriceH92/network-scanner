@@ -23,6 +23,16 @@ détectés : box Freebox, PC, appareils Xiaomi/HP, Synology…).
 
 ## Changelog
 
+### v1.9.11 — serveurs web conteneurisés enfin détectés
+- **Ports web/conteneurs toujours scannés** : les ports web et self-hosted
+  courants (5000, 5001, 8096, 8123, 9443, 3000, 8000, 81, 8081, 32400, API
+  Docker 2375…) sont désormais testés sur **tous** les hôtes vivants, même en
+  mode Standard. Avant, un serveur web conteneurisé sur un port non standard
+  (ex. `192.168.0.180:5000`) n'apparaissait pas.
+- **Sonde de vivacité TCP élargie** : ces mêmes ports servent à découvrir les
+  hôtes qui filtrent le ping (un conteneur web sur 8096/8123/9443… n'était pas
+  détecté du tout car la sonde ne testait que 12 ports).
+
 ### v1.9.10 — services Docker en mode bridge (ports)
 - **Conteneurs Docker en bridge** : en mode bridge (défaut), un conteneur n'a
   pas d'IP propre — il est derrière l'IP de l'hôte, seuls ses **ports publiés**

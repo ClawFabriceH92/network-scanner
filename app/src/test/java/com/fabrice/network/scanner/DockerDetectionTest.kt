@@ -103,6 +103,18 @@ class DockerDetectionTest {
     }
 
     @Test
+    fun tcpPingPorts_coverCommonWebContainerPorts() {
+        val p = PortScanner.TCP_PING_PORTS.toSet()
+        // La sonde de vivacité doit couvrir les ports web/conteneurs courants,
+        // sinon un hôte qui filtre l'ICMP et n'expose qu'un tel service reste
+        // invisible (ex. Synology/Flask sur 5000, Jellyfin 8096, HA 8123).
+        assertTrue(5000 in p)
+        assertTrue(8096 in p)
+        assertTrue(8123 in p)
+        assertTrue(9443 in p)
+    }
+
+    @Test
     fun serviceName_resolvesContainerPort() {
         assertEquals("Portainer", PortScanner.serviceName(9443))
         assertEquals("Jellyfin", PortScanner.serviceName(8096))
