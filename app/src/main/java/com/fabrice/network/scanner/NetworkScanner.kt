@@ -216,9 +216,16 @@ object NetworkScanner {
         // d'ordre seulement — la couverture finale est identique (mêmes lectures).
         val earlyArp = if (scanFast) readArp() else emptyMap<String, String>()
 
-        // Progression = nombre d'ADRESSES sondées (pas d'appareils trouvés), sur
-        // les 2 vagues cumulées → la barre avance réellement de 0 à 100 %.
-        val totalProbes = hosts.size * 2
+        // Progression sur 3 phases pour que la barre reflète le vrai travail
+        // (le scan fait plus de choses qu'avant : vivacité TCP + scan de ports
+        // élargi). Total = 2 vagues de ping + sonde de vivacité + enrichissement
+        // (scan de ports/bannières par hôte). Les phases non exécutées (mode
+        // économie) ne sont pas comptées, donc la barre atteint bien 100 %.
+        val doLiveness = scanPorts && !scanEconomy
+        val doEnrich = scanPorts
+        val totalProbes = hosts.size * 2 +
+            (if (doLiveness) hosts.size else 0) +
+            (if (doEnrich) hosts.size else 0)
         val probed = java.util.concurrent.atomic.AtomicInteger(0)
 
         fun pingSweep() {
@@ -268,9 +275,12 @@ object NetworkScanner {
             val executor = Executors.newFixedThreadPool(128)
             try {
                 hosts.forEach { host ->
-                    if (host in alive) return@forEach
                     executor.execute {
-                        if (PortScanner.isAnyPortOpen(host)) tcpAlive.add(host)
+                        if (host !in alive && PortScanner.isAnyPortOpen(host)) {
+                            tcpAlive.add(host)
+                        }
+                        val done = probed.incrementAndGet()
+                        if (done % 32 == 0 || done == totalProbes) onProgress(done, totalProbes)
                     }
                 }
                 executor.shutdown()
@@ -424,7 +434,7 @@ object NetworkScanner {
                     .ifBlank { classified }
             } else classified
 
-            Device(
+            val built = Device(
                 ip = host,
                 mac = mac,
                 vendor = vendor,
@@ -450,12 +460,23 @@ object NetworkScanner {
                 snmpLocation = snmp?.location,
                 snmpUptime = snmp?.uptimeSeconds
             )
+            // Progression de la phase d'enrichissement (un hôte traité).
+            if (doEnrich) {
+                val done = probed.incrementAndGet()
+                if (done % 4 == 0 || done >= totalProbes) {
+                    onProgress(done.coerceAtMost(totalProbes), totalProbes)
+                }
+            }
+            built
             // Tri : le périphérique qui lance le scan (isSelf) TOUT EN HAUT,
             // puis les autres par IP.
         }.sortedWith(
             compareByDescending<Device> { it.isSelf }
                 .thenBy { it.ip }
         )
+        // La phase d'enrichissement ne traite que les hôtes vivants (≤ hosts.size)
+        // → on force la barre à 100 % une fois la liste construite.
+        onProgress(totalProbes, totalProbes)
 
         // --- Feature 7 : test des mots de passe par défaut (services web) ---
         // Après le scan, en parallèle, pour chaque appareil vivant avec un port

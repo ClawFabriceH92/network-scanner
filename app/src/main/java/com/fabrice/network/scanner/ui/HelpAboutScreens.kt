@@ -235,6 +235,8 @@ private fun UpdateSection(
     onDownloadUpdate: () -> Unit,
     onDownloadLatest: () -> Unit = {}
 ) {
+    val clipboard = LocalClipboardManager.current
+    var linkCopied by remember { mutableStateOf(false) }
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
@@ -280,6 +282,26 @@ private fun UpdateSection(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            HorizontalDivider()
+            // Si le téléchargement automatique échoue (bloqué par le navigateur,
+            // pare-feu, etc.) : lien direct à copier-coller dans un navigateur.
+            Text(
+                "Le téléchargement ne démarre pas ? Copie ce lien et ouvre-le dans " +
+                    "ton navigateur :",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                UpdateChecker.LATEST_APK_URL,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+            OutlinedButton(onClick = {
+                clipboard.setText(AnnotatedString(UpdateChecker.LATEST_APK_URL))
+                linkCopied = true
+            }) {
+                Text(if (linkCopied) "✓ Lien copié" else "📋 Copier le lien de l'APK")
+            }
         }
     }
 }

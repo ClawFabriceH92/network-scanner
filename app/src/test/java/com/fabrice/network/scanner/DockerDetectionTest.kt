@@ -120,6 +120,30 @@ class DockerDetectionTest {
         assertEquals("Jellyfin", PortScanner.serviceName(8096))
     }
 
+    // --- Détection des sites web ---
+
+    @Test
+    fun webUrl_buildsCorrectUrls() {
+        assertEquals("http://192.168.0.180:5000", PortScanner.webUrl("192.168.0.180", 5000))
+        assertEquals("http://192.168.0.1", PortScanner.webUrl("192.168.0.1", 80))
+        assertEquals("https://192.168.0.5", PortScanner.webUrl("192.168.0.5", 443))
+        assertEquals("https://192.168.0.5:9443", PortScanner.webUrl("192.168.0.5", 9443))
+    }
+
+    @Test
+    fun webUrl_nullForNonWebPorts() {
+        assertNull(PortScanner.webUrl("192.168.0.5", 22))   // SSH
+        assertNull(PortScanner.webUrl("192.168.0.5", 445))  // SMB
+        assertNull(PortScanner.webUrl("192.168.0.5", 3306)) // MySQL
+    }
+
+    @Test
+    fun isWebPort_flagsWebServices() {
+        assertTrue(PortScanner.isWebPort(5000))
+        assertTrue(PortScanner.isWebPort(8096))
+        assertFalse(PortScanner.isWebPort(22))
+    }
+
     // --- Scan complet à la demande ---
 
     @Test
