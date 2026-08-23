@@ -23,6 +23,12 @@ détectés : box Freebox, PC, appareils Xiaomi/HP, Synology…).
 
 ## Changelog
 
+### v1.9.13 — 🌐 sur les ports web (liste) + libellé nav corrigé
+- **Repère site web dans la liste** : les pastilles de ports web affichent 🌐
+  directement sur la carte de l'appareil (plus besoin d'ouvrir la fiche).
+- **Libellé « Appareils »** : correction du léger rognage du dernier caractère
+  dans la barre de navigation.
+
 ### v1.9.12 — sites web, pop-up MAJ, lien APK copiable, barre de scan
 - **Sites web identifiés** : dans « Services ouverts », les ports servant une
   interface web sont marqués « 🌐 site web » et sont **cliquables** (ouvre
