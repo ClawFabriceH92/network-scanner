@@ -23,6 +23,18 @@ détectés : box Freebox, PC, appareils Xiaomi/HP, Synology…).
 
 ## Changelog
 
+### v1.9.12 — sites web, pop-up MAJ, lien APK copiable, barre de scan
+- **Sites web identifiés** : dans « Services ouverts », les ports servant une
+  interface web sont marqués « 🌐 site web » et sont **cliquables** (ouvre
+  `http(s)://ip:port` dans le navigateur).
+- **Pop-up de mise à jour** : une nouvelle version détectée au lancement
+  s'affiche dans une boîte de dialogue (Télécharger / Copier le lien / Plus tard).
+- **Lien APK copiable** : dans Réglages, le lien direct de l'APK est affiché et
+  copiable — utile quand le téléchargement automatique ne démarre pas.
+- **Barre de progression** : reflète désormais les 3 phases (ping, sonde de
+  vivacité TCP, scan de ports) au lieu de rester bloquée à 100 % pendant le
+  scan de ports.
+
 ### v1.9.11 — serveurs web conteneurisés enfin détectés
 - **Ports web/conteneurs toujours scannés** : les ports web et self-hosted
   courants (5000, 5001, 8096, 8123, 9443, 3000, 8000, 81, 8081, 32400, API

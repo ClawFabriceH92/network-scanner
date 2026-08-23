@@ -243,6 +243,10 @@ fun ScannerScreen() {
     var updateStatus by remember { mutableStateOf<String?>(null) }
     var updateChecking by remember { mutableStateOf(false) }
     var updateDownloading by remember { mutableStateOf(false) }
+    // Pop-up « mise à jour disponible » (affichée une fois par lancement quand
+    // le check silencieux détecte une nouvelle version).
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var updateDialogShown by remember { mutableStateOf(false) }
 
     // --- Ergonomie : recherche / tri / filtres / regroupement ---
     var searchQuery by remember { mutableStateOf("") }
@@ -476,6 +480,12 @@ fun ScannerScreen() {
                 info != null -> {
                     updateInfo = info
                     if (!silent) updateStatus = "⬇️ Nouvelle version disponible : v${info.version}"
+                    // Au lancement (check silencieux) : proposer la MAJ via pop-up,
+                    // une seule fois par session.
+                    if (silent && !updateDialogShown) {
+                        showUpdateDialog = true
+                        updateDialogShown = true
+                    }
                 }
                 err != null -> {
                     updateInfo = null
@@ -589,6 +599,36 @@ fun ScannerScreen() {
     // sous-écran (Réglages, À propos, Timeline, Carte, Nouveaux appareils) au
     // lieu de quitter l'application.
     BackHandler(enabled = screen != 0) { screen = 0 }
+
+    // Pop-up « mise à jour disponible » (détectée au lancement).
+    val pendingUpdate = updateInfo
+    if (showUpdateDialog && pendingUpdate != null) {
+        val dialogClipboard = LocalClipboardManager.current
+        AlertDialog(
+            onDismissRequest = { showUpdateDialog = false },
+            title = { Text("Mise à jour disponible") },
+            text = {
+                Text(
+                    "Une nouvelle version est disponible : v${pendingUpdate.version}\n" +
+                        "(version actuelle : v${BuildConfig.VERSION_NAME})."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showUpdateDialog = false
+                    downloadAppUpdate()
+                }) { Text("Télécharger") }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        dialogClipboard.setText(AnnotatedString(UpdateChecker.LATEST_APK_URL))
+                    }) { Text("Copier le lien") }
+                    TextButton(onClick = { showUpdateDialog = false }) { Text("Plus tard") }
+                }
+            }
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -2313,9 +2353,31 @@ private fun DeviceDetailScreen(
             // --- Services ouverts (ports du scan + éventuel scan complet) ---
             if (openPorts.isNotEmpty()) {
                 SectionCard("Services ouverts") {
+                    val webCount = openPorts.count { PortScanner.isWebPort(it) }
+                    if (webCount > 0) {
+                        Text(
+                            "🌐 $webCount site(s) web détecté(s) — appuie pour ouvrir",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(Modifier.height(4.dp))
+                    }
                     openPorts.forEach { port ->
                         val fromDeep = port !in device.ports
-                        Row(Modifier.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                        val url = PortScanner.webUrl(device.ip, port)
+                        val rowMod = Modifier
+                            .fillMaxWidth()
+                            .then(
+                                if (url != null) Modifier.clickable {
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                        )
+                                    }
+                                } else Modifier
+                            )
+                            .padding(vertical = 3.dp)
+                        Row(rowMod, verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 PortScanner.serviceName(port),
                                 style = MaterialTheme.typography.bodyMedium,
@@ -2327,12 +2389,21 @@ private fun DeviceDetailScreen(
                                 style = LocalMonoTextStyle.current,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            if (url != null) {
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    "🌐 site web",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
                             if (fromDeep) {
                                 Spacer(Modifier.width(6.dp))
                                 Text(
                                     "• scan complet",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }

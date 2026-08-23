@@ -124,6 +124,33 @@ object PortScanner {
     fun serviceName(port: Int): String =
         ALL_PORTS.firstOrNull { it.first == port }?.second ?: "port-$port"
 
+    /** Ports servant une interface web en HTTPS. */
+    val HTTPS_WEB_PORTS = setOf(443, 8443, 9443, 5001, 4433, 636)
+
+    /** Ports servant une interface web en HTTP (admin, apps self-hosted…). */
+    val HTTP_WEB_PORTS = setOf(
+        80, 81, 3000, 3001, 5000, 8000, 8080, 8081, 8086, 8096, 8112, 8123,
+        8200, 8384, 8686, 8888, 8920, 8989, 7878, 6767, 9000, 9090, 9091,
+        9117, 9696, 10000, 19999, 20000, 32400
+    )
+
+    /** Vrai si le port sert (très probablement) une interface web / un site. */
+    fun isWebPort(port: Int): Boolean =
+        port in HTTPS_WEB_PORTS || port in HTTP_WEB_PORTS
+
+    /**
+     * URL à ouvrir pour un port web, ou null si ce n'est pas un port web.
+     * Ex. (192.168.0.180, 5000) → "http://192.168.0.180:5000".
+     */
+    fun webUrl(ip: String, port: Int): String? {
+        val https = port in HTTPS_WEB_PORTS
+        val http = port in HTTP_WEB_PORTS
+        if (!https && !http) return null
+        val scheme = if (https) "https" else "http"
+        val suffix = if (port == 80 || port == 443) "" else ":$port"
+        return "$scheme://$ip$suffix"
+    }
+
     /**
      * Ports de « ping TCP » : sonde de vivacité pour les hôtes qui filtrent
      * l'ICMP (conteneurs Docker, serveurs/VM pare-feu, IoT). Ciblés parce que
