@@ -83,4 +83,44 @@ class DockerDetectionTest {
         // Port fermé sur loopback → connexion refusée immédiatement.
         assertFalse(PortScanner.isAnyPortOpen("127.0.0.1", listOf(1), timeoutMs = 300))
     }
+
+    // --- Ports des applications conteneurisées (Docker bridge) ---
+
+    @Test
+    fun allPorts_includeCommonContainerPorts() {
+        val ports = PortScanner.ALL_PORTS.map { it.first }.toSet()
+        // Quelques services conteneurisés très répandus doivent être couverts.
+        assertTrue(9443 in ports)  // Portainer
+        assertTrue(8096 in ports)  // Jellyfin
+        assertTrue(8123 in ports)  // Home Assistant
+        assertTrue(2375 in ports)  // Docker API
+    }
+
+    @Test
+    fun allPorts_hasNoDuplicatePortNumbers() {
+        val nums = PortScanner.ALL_PORTS.map { it.first }
+        assertEquals(nums.size, nums.distinct().size)
+    }
+
+    @Test
+    fun serviceName_resolvesContainerPort() {
+        assertEquals("Portainer", PortScanner.serviceName(9443))
+        assertEquals("Jellyfin", PortScanner.serviceName(8096))
+    }
+
+    // --- Scan complet à la demande ---
+
+    @Test
+    fun scanAllPorts_findsAListeningPort() {
+        ServerSocket().use { server ->
+            server.bind(InetSocketAddress("127.0.0.1", 0))
+            val port = server.localPort
+            // Plage réduite autour du port en écoute : évite d'épuiser les ports
+            // éphémères du runner CI (le comportement par défaut reste 1..65535).
+            val from = (port - 20).coerceAtLeast(1)
+            val to = (port + 20).coerceAtMost(65535)
+            val open = PortScanner.scanAllPorts("127.0.0.1", timeoutMs = 200, range = from..to)
+            assertTrue("le port en écoute $port doit être trouvé", port in open)
+        }
+    }
 }

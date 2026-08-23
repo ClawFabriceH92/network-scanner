@@ -23,6 +23,17 @@ détectés : box Freebox, PC, appareils Xiaomi/HP, Synology…).
 
 ## Changelog
 
+### v1.9.10 — services Docker en mode bridge (ports)
+- **Conteneurs Docker en bridge** : en mode bridge (défaut), un conteneur n'a
+  pas d'IP propre — il est derrière l'IP de l'hôte, seuls ses **ports publiés**
+  sont visibles. Le mode « Élargi » inclut désormais les ports typiques des
+  apps conteneurisées (Portainer 9443, Jellyfin 8096, Home Assistant 8123,
+  Grafana 3000, Sonarr/Radarr/Prowlarr, Docker API 2375…).
+- **Scan complet des ports (1–65535)** : nouveau bouton sur la fiche d'un
+  appareil. Sonde les 65535 ports de l'hôte pour révéler les services sur des
+  ports arbitraires. Les ports trouvés sont ajoutés à « Services ouverts »
+  (marqués « scan complet »).
+
 ### v1.9.9 — détection des conteneurs Docker
 - **Sonde de vivacité TCP** : les hôtes qui filtrent l'ICMP (conteneurs Docker,
   serveurs/VM derrière un pare-feu, IoT) sont désormais découverts via une
