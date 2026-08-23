@@ -2097,6 +2097,16 @@ private fun DeviceDetailScreen(
     val name = deviceDisplayName(device, store.customName(key))
     val hasWeb = device.ports.any { it == 80 || it == 443 || it == 8080 }
 
+    // Scan complet des ports (1-65535) à la demande : découvre les services des
+    // conteneurs Docker en mode bridge (ports publiés sur l'IP de l'hôte, hors
+    // des listes prédéfinies). Résultats fusionnés avec les ports déjà connus.
+    var deepPorts by remember(device.ip) { mutableStateOf<List<Int>?>(null) }
+    var deepScanning by remember(device.ip) { mutableStateOf(false) }
+    var deepProgress by remember(device.ip) { mutableStateOf(0) }
+    val openPorts = remember(device.ports, deepPorts) {
+        (device.ports + (deepPorts ?: emptyList())).distinct().sorted()
+    }
+
     // Bouton/geste retour système : sauvegarde le nom personnalisé saisi et
     // revient à la liste (comme le bouton « ← Retour »), au lieu de quitter l'app.
     BackHandler {
@@ -2206,6 +2216,34 @@ private fun DeviceDetailScreen(
                         scope.launch { snackbar.showSnackbar("MAC copiée : ${device.mac}") }
                     }) { Text("Copier MAC") }
                 }
+                // Scan complet des 65535 ports (Docker bridge / services sur
+                // ports non standard). Désactivé pendant l'exécution (progression).
+                FilledTonalButton(
+                    onClick = {
+                        deepScanning = true
+                        deepProgress = 0
+                        scope.launch {
+                            val found = withContext(Dispatchers.IO) {
+                                PortScanner.scanAllPorts(device.ip) { d, t ->
+                                    deepProgress = if (t == 0) 0 else d * 100 / t
+                                }
+                            }
+                            deepPorts = found
+                            deepScanning = false
+                            val extra = found.filterNot { it in device.ports }
+                            snackbar.showSnackbar(
+                                when {
+                                    found.isEmpty() -> "Scan complet : aucun port ouvert"
+                                    extra.isEmpty() -> "Scan complet : ${found.size} port(s), rien de nouveau"
+                                    else -> "Scan complet : ${extra.size} nouveau(x) port(s) trouvé(s)"
+                                }
+                            )
+                        }
+                    },
+                    enabled = !deepScanning
+                ) {
+                    Text(if (deepScanning) "Scan… $deepProgress%" else "Scan complet des ports")
+                }
             }
 
             // --- Identité ---
@@ -2272,10 +2310,11 @@ private fun DeviceDetailScreen(
                 }
             }
 
-            // --- Services ouverts ---
-            if (device.ports.isNotEmpty()) {
+            // --- Services ouverts (ports du scan + éventuel scan complet) ---
+            if (openPorts.isNotEmpty()) {
                 SectionCard("Services ouverts") {
-                    device.ports.forEach { port ->
+                    openPorts.forEach { port ->
+                        val fromDeep = port !in device.ports
                         Row(Modifier.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 PortScanner.serviceName(port),
@@ -2288,6 +2327,14 @@ private fun DeviceDetailScreen(
                                 style = LocalMonoTextStyle.current,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            if (fromDeep) {
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    "• scan complet",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
                         }
                     }
                 }

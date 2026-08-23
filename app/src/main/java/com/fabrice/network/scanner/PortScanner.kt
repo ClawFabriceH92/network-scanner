@@ -79,8 +79,47 @@ object PortScanner {
         22_222 to "Synology"
     )
 
-    /** Tous les ports connus (standard + élargi). */
-    val ALL_PORTS: List<Pair<Int, String>> = COMMON_PORTS + EXTRA_PORTS
+    /**
+     * Ports typiques des applications conteneurisées (Docker en mode bridge :
+     * le conteneur n'a pas d'IP propre, seuls ses ports PUBLIÉS sont visibles
+     * sur l'IP de l'hôte). Sans ça, un Portainer/Jellyfin/Home Assistant…
+     * n'apparaissait pas car son port n'était dans aucune liste.
+     */
+    val CONTAINER_PORTS = listOf(
+        81 to "NPM-Admin",
+        2375 to "Docker-API",
+        2376 to "Docker-API-TLS",
+        3000 to "Grafana/App",
+        3001 to "Uptime-Kuma",
+        3306 to "MySQL",
+        5432 to "PostgreSQL",
+        5601 to "Kibana",
+        6379 to "Redis",
+        6767 to "Bazarr",
+        7878 to "Radarr",
+        8000 to "HTTP-alt4",
+        8081 to "HTTP-admin",
+        8086 to "InfluxDB",
+        8096 to "Jellyfin",
+        8112 to "Deluge",
+        8123 to "Home-Assistant",
+        8200 to "Vault/Duplicati",
+        8384 to "Syncthing",
+        8686 to "Lidarr",
+        8920 to "Emby",
+        8989 to "Sonarr",
+        9091 to "Transmission",
+        9117 to "Jackett",
+        9443 to "Portainer",
+        9696 to "Prowlarr",
+        1880 to "Node-RED",
+        1883 to "MQTT",
+        19999 to "Netdata"
+    )
+
+    /** Tous les ports connus (standard + élargi + conteneurs). */
+    val ALL_PORTS: List<Pair<Int, String>> =
+        (COMMON_PORTS + EXTRA_PORTS + CONTAINER_PORTS).distinctBy { it.first }
 
     fun serviceName(port: Int): String =
         ALL_PORTS.firstOrNull { it.first == port }?.second ?: "port-$port"
@@ -143,6 +182,43 @@ object PortScanner {
         } finally {
             // isTerminated (isShutdown est déjà vrai après shutdown()) : force
             // réellement l'arrêt si awaitTermination expire.
+            if (!executor.isTerminated) executor.shutdownNow()
+        }
+        return open.sorted()
+    }
+
+    /**
+     * Scan COMPLET des 65535 ports d'UN hôte (scan approfondi à la demande).
+     *
+     * Découvre les services sur des ports arbitraires — typiquement les
+     * conteneurs Docker en mode bridge dont les ports publiés ne figurent dans
+     * aucune liste prédéfinie. Réservé à une IP unique (déclenché depuis la
+     * fiche appareil) : lancer ça sur tout le sous-réseau serait bien trop long.
+     *
+     * Fortement parallélisé, timeout court. `onProgress(done, total)` est appelé
+     * périodiquement pour la barre de progression.
+     */
+    fun scanAllPorts(
+        ip: String,
+        timeoutMs: Int = 250,
+        range: IntRange = 1..65535,
+        onProgress: (done: Int, total: Int) -> Unit = { _, _ -> }
+    ): List<Int> {
+        val total = range.count()
+        val open = ConcurrentHashMap.newKeySet<Int>()
+        val done = java.util.concurrent.atomic.AtomicInteger(0)
+        val executor = Executors.newFixedThreadPool(256)
+        try {
+            range.forEach { port ->
+                executor.execute {
+                    if (isPortOpen(ip, port, timeoutMs)) open.add(port)
+                    val d = done.incrementAndGet()
+                    if (d % 1000 == 0 || d == total) onProgress(d, total)
+                }
+            }
+            executor.shutdown()
+            executor.awaitTermination(5, TimeUnit.MINUTES)
+        } finally {
             if (!executor.isTerminated) executor.shutdownNow()
         }
         return open.sorted()
