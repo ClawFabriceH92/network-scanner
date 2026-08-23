@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -985,6 +986,12 @@ private fun NavLabel(text: String) {
         text,
         maxLines = 1,
         softWrap = false,
+        // Largeur intrinsèque complète + overflow visible : sinon le dernier
+        // glyphe du libellé le plus long (« Appareils ») est légèrement rogné
+        // quand l'item de navigation est étroit.
+        overflow = TextOverflow.Visible,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.wrapContentWidth(unbounded = true),
         style = MaterialTheme.typography.labelSmall
     )
 }
@@ -1952,8 +1959,10 @@ private fun DeviceCard(
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         device.ports.sorted().forEach { p ->
+                            // 🌐 accolé au port quand il sert une interface web
+                            // (repère « site web » directement dans la liste).
                             Pill(
-                                text = ":$p",
+                                text = if (PortScanner.isWebPort(p)) ":$p 🌐" else ":$p",
                                 bg = semantic.portOpen,
                                 fg = onColorFor(semantic.portOpen)
                             )
