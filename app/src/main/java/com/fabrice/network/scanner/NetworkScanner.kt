@@ -347,8 +347,15 @@ object NetworkScanner {
             // est forcément en ligne — il mérite le scan de ports et le statut.
             val responded = alive.contains(host) || tcpAlive.contains(host) ||
                 host in mdnsByIp || host in wsdByIp || host in upnpByIp || host in nbnsByIp
-            val ports = if (scanPorts && responded) {
-                PortScanner.scanPorts(host, portsToScan)
+            // Toujours inclure les ports web/conteneurs (TCP_PING_PORTS) en plus
+            // du mode choisi : un serveur web conteneurisé sur 5000/8096/8123…
+            // doit apparaître même en mode Standard (16 ports), sinon l'hôte est
+            // listé « sans service » et le conteneur passe inaperçu.
+            val effectivePorts = if (scanPorts && responded) {
+                (portsToScan + PortScanner.TCP_PING_PORTS).distinct()
+            } else emptyList()
+            val ports = if (effectivePorts.isNotEmpty()) {
+                PortScanner.scanPorts(host, effectivePorts)
             } else emptyList()
 
             // NBNS : d'abord le résultat du broadcast (déjà connu), puis une

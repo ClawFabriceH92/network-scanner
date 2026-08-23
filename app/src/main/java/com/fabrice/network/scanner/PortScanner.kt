@@ -131,8 +131,11 @@ object PortScanner {
      * apps conteneurisées : 3000/5000/8000/9000), admin distante, partages.
      */
     val TCP_PING_PORTS = listOf(
-        80, 443, 22, 8080, 8443, 445, 3389, 53,
-        3000, 5000, 8000, 9000
+        // Web / serveurs web conteneurisés (le cas le plus fréquent)
+        80, 443, 8080, 8443, 8000, 8081, 81, 5000, 5001, 8096, 8123, 9443,
+        3000, 9000, 32400,
+        // Administration / partages / API
+        22, 445, 3389, 53, 2375
     )
 
     /**
