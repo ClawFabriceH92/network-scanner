@@ -43,7 +43,22 @@ data class Device(
     /** Infos/statistiques imprimante (IPP + SNMP), null si non-imprimante. Non
      *  persisté dans le dernier scan — les stats sont historisées à part
      *  (PrinterStatsStore). */
-    val printer: PrinterProbe.PrinterInfo? = null
+    val printer: PrinterProbe.PrinterInfo? = null,
+    // --- Enrichissements v1.9.18 (transient, non persistés) ---
+    /** Titre de la page web (HTTP <title>) si un service web répond. */
+    val httpTitle: String = "",
+    /** Empreinte MD5 du favicon (identifie l'UI web), vide si absent. */
+    val httpFavicon: String = "",
+    /** Certificat TLS (443/8443/9443) : identité + sécurité. */
+    val tls: TlsProbe.TlsInfo? = null,
+    /** Flux RTSP/ONVIF (caméras) si le port 554 répond. */
+    val rtsp: RtspProbe.RtspInfo? = null,
+    /** UPnP-IGD (passerelle) : IP publique + redirections de ports. */
+    val igd: IgdProbe.IgdInfo? = null,
+    /** SNMP approfondi : n° de série, contact, nombre d'interfaces. */
+    val snmpSerial: String? = null,
+    val snmpContact: String? = null,
+    val snmpIfCount: Int? = null
 )
 
 /** Résultat d'un ping : vivant ? + TTL de la réponse (pour l'OS) + latence. */
@@ -433,6 +448,30 @@ object NetworkScanner {
             val snmp = if (responded && 161 in ports && !scanEconomy) {
                 runCatching { SnmpScanner.probeBlocking(host) }.getOrNull()
             } else null
+            // SNMP approfondi : n° de série, contact, nombre d'interfaces.
+            val snmpExtra = if (responded && 161 in ports && !scanEconomy) {
+                runCatching { snmpDetails(host) }.getOrNull()
+            } else null
+            // Fingerprint web : titre de page + empreinte favicon (identifie l'UI).
+            val hasWeb = responded && BannerGrab.HTTP_PORTS.any { it in ports }
+            val httpTitle = if (hasWeb && !scanEconomy) {
+                runCatching { BannerGrab.httpTitle(host, ports) }.getOrDefault("")
+            } else ""
+            val httpFavicon = if (hasWeb && !scanEconomy) {
+                runCatching { BannerGrab.faviconHash(host, ports) }.getOrDefault("")
+            } else ""
+            // Certificat TLS (identité + posture de sécurité).
+            val tls = if (responded && !scanEconomy && TlsProbe.TLS_PORTS.any { it in ports }) {
+                runCatching { TlsProbe.probe(host, ports) }.getOrNull()
+            } else null
+            // RTSP/ONVIF (caméras) si le port 554 est ouvert.
+            val rtsp = if (responded && 554 in ports && !scanEconomy) {
+                runCatching { RtspProbe.probe(host) }.getOrNull()
+            } else null
+            // UPnP-IGD : uniquement sur la passerelle (IP publique + redirections).
+            val igd = if (host == gatewayIp && !scanEconomy) {
+                runCatching { IgdProbe.discover() }.getOrNull()
+            } else null
             // Infos UPnP éventuelles (friendlyName, fabricant, modèle…)
             var upnp = upnpByIp[host]
             if (upnp != null && upnp.location.isNotBlank() && !upnp.hasInfo) {
@@ -491,7 +530,15 @@ object NetworkScanner {
                 snmpName = snmp?.name,
                 snmpLocation = snmp?.location,
                 snmpUptime = snmp?.uptimeSeconds,
-                printer = printer
+                printer = printer,
+                httpTitle = httpTitle,
+                httpFavicon = httpFavicon,
+                tls = tls,
+                rtsp = rtsp,
+                igd = igd,
+                snmpSerial = snmpExtra?.serial,
+                snmpContact = snmpExtra?.contact,
+                snmpIfCount = snmpExtra?.ifCount
             )
             // Progression de la phase d'enrichissement (un hôte traité).
             if (doEnrich) {
@@ -657,6 +704,24 @@ object NetworkScanner {
         if (raw.size != 6) return null
         if (raw.all { it.toInt() == 0 }) return null
         return raw.joinToString(":") { "%02x".format(it.toInt() and 0xFF) }
+    }
+
+    /** SNMP approfondi : n° de série, contact système, nombre d'interfaces. */
+    data class SnmpDetails(val serial: String?, val contact: String?, val ifCount: Int?)
+
+    private const val OID_SYS_CONTACT = "1.3.6.1.2.1.1.4.0"
+    private const val OID_IF_NUMBER = "1.3.6.1.2.1.2.1.0"
+    private const val OID_ENT_SERIAL = "1.3.6.1.2.1.47.1.1.1.1.11.1"
+
+    /** Lit les infos SNMP complémentaires (série/contact/interfaces). */
+    private fun snmpDetails(host: String): SnmpDetails? {
+        val vbs = SnmpScanner.getOids(host, listOf(OID_ENT_SERIAL, OID_SYS_CONTACT, OID_IF_NUMBER))
+        if (vbs.isEmpty()) return null
+        val serial = vbs[OID_ENT_SERIAL]?.textOrNull()?.trim()?.ifBlank { null }
+        val contact = vbs[OID_SYS_CONTACT]?.textOrNull()?.trim()?.ifBlank { null }
+        val ifCount = vbs[OID_IF_NUMBER]?.longOrNull()?.toInt()
+        if (serial == null && contact == null && ifCount == null) return null
+        return SnmpDetails(serial, contact, ifCount)
     }
 
     /** OID SNMP de la table ARP (ipNetToMediaPhysAddress) : IP → MAC. */

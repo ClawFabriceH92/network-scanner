@@ -43,6 +43,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.fabrice.network.scanner.NetworkInfoProvider
 import com.fabrice.network.scanner.ProximityIndicator
+import com.fabrice.network.scanner.Traceroute
 import com.fabrice.network.scanner.WifiQuality
 import com.fabrice.network.scanner.ui.theme.LocalMonoTextStyle
 import kotlinx.coroutines.delay
@@ -67,6 +68,9 @@ fun NetworkScreen() {
     // Fenêtre glissante de 4 échantillons RSSI pour la tendance de proximité
     val rssiWindow = remember { mutableListOf<Int>() }
     val startTime = remember { System.currentTimeMillis() }
+    // Traceroute (à la demande) vers Internet.
+    var tracing by remember { mutableStateOf(false) }
+    var traceHops by remember { mutableStateOf<List<Traceroute.Hop>>(emptyList()) }
 
     // Récupère l'IP publique (WAN) + GeoIP au chargement, hors thread UI
     LaunchedEffect(Unit) {
@@ -164,6 +168,54 @@ fun NetworkScreen() {
                 InfoRow("Bande", info.band.ifBlank { "—" })
                 InfoRow("Débit liaison", if (info.linkSpeedMbps > 0) "${info.linkSpeedMbps} Mbps" else "—")
                 InfoRow("Signal", "${WifiQuality.formatRssi(rssi)} · ${WifiQuality.label(rssi)}")
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        // --- Traceroute vers Internet ---
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.large,
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
+        ) {
+            Column(Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Traceroute (Internet)",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.weight(1f))
+                    TextButton(
+                        enabled = !tracing,
+                        onClick = {
+                            tracing = true
+                            traceHops = emptyList()
+                            scope.launch {
+                                val hops = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    Traceroute.trace("8.8.8.8")
+                                }
+                                traceHops = hops
+                                tracing = false
+                            }
+                        }
+                    ) { Text(if (tracing) "En cours…" else "Lancer") }
+                }
+                if (traceHops.isEmpty() && !tracing) {
+                    Text(
+                        "Affiche le chemin réseau (sauts) jusqu'à Internet.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                traceHops.forEach { h ->
+                    Text(
+                        "${h.ttl}. ${h.ip}" + (h.latencyMs?.let { "  ${it} ms" } ?: "") +
+                            (if (h.reachedTarget) "  ✅" else ""),
+                        style = LocalMonoTextStyle.current
+                    )
+                }
             }
         }
 

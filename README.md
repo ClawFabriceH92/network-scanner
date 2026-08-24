@@ -23,6 +23,18 @@ détectés : box Freebox, PC, appareils Xiaomi/HP, Synology…).
 
 ## Changelog
 
+### v1.9.18 — enrichissement : Web, TLS, RTSP, UPnP-IGD, SNMP+, traceroute, latence
+- **Fingerprint web** : titre de la page (`<title>`) + empreinte MD5 du favicon.
+- **Certificat TLS** (443/8443/9443) : nom (CN), émetteur, expiration, alertes
+  auto-signé/expiré.
+- **RTSP/ONVIF** (caméras, port 554) : serveur + URL de flux à ouvrir dans VLC.
+- **UPnP-IGD** (passerelle) : IP publique **et liste des redirections de ports**
+  (port forwarding) — repère les services exposés sur Internet.
+- **SNMP approfondi** : n° de série, contact système, nombre d'interfaces.
+- **Traceroute** vers Internet (onglet Réseau) et **historique de latence**
+  par appareil (min/moyenne/max + gigue) sur la fiche.
+- **Type de connexion** (Wi-Fi/Ethernet) affiché quand la box l'expose.
+
 ### v1.9.17 — MAC via la table ARP du routeur (SNMP, agnostique marque)
 - **Table ARP de la passerelle en SNMP** (`ipNetToMediaPhysAddress`) : si le
   routeur expose SNMP, l'app lit IP→MAC pour **tout** le réseau, quelle que soit
