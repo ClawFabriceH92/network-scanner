@@ -2333,10 +2333,15 @@ private fun DeviceDetailScreen(
                                 val broadcast = if (subnet != null)
                                     NetworkScanner.broadcastAddress(subnet.first, subnet.second)
                                 else "255.255.255.255"
-                                val works = withMulticastLock(context) {
-                                    WoLDetector.testWol(device.mac, device.ip, broadcast, waitMs = 15_000) { ip ->
-                                        ping(ip).first
-                                    }
+                                // Lock multicast UNIQUEMENT autour de l'envoi (non
+                                // suspendu) ; l'attente + re-ping se font ensuite
+                                // dans le corps coroutine.
+                                val sent = withMulticastLock(context) {
+                                    WakeOnLan.send(device.mac, broadcast)
+                                }
+                                val works = if (!sent) false else {
+                                    kotlinx.coroutines.delay(15_000)
+                                    withContext(Dispatchers.IO) { ping(device.ip).first }
                                 }
                                 WolStore(context).setResult(ScanHistory.identityKey(device), works)
                                 wolWorks = works
