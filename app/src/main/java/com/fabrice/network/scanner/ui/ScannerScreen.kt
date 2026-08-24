@@ -963,12 +963,38 @@ fun ScannerScreen() {
                                         // NetworkOnMainThreadException.
                                         scope.launch(Dispatchers.IO) {
                                             val box = BoxManager.detect(context)
-                                            if (box is FreeboxBoxClient) {
-                                                box.requestAuthorization()
+                                            if (box !is FreeboxBoxClient) return@launch
+                                            val token = box.requestAuthorization()
+                                            if (token == null) {
                                                 withContext(Dispatchers.Main) {
-                                                    snackbar.showSnackbar(
-                                                        "Autorisation envoyée — valide-la sur la box, puis rescanne."
-                                                    )
+                                                    snackbar.showSnackbar("Impossible de contacter la Freebox.")
+                                                }
+                                                return@launch
+                                            }
+                                            withContext(Dispatchers.Main) {
+                                                snackbar.showSnackbar(
+                                                    "👉 Valide la demande « NetworkScanner » sur l'écran de la Freebox…"
+                                                )
+                                            }
+                                            // Poll du statut jusqu'à ~90 s : SEUL ce poll
+                                            // promeut le token « pending » en token valide
+                                            // (sinon la box n'est jamais réellement autorisée).
+                                            var status = "pending"
+                                            val deadline = System.currentTimeMillis() + 90_000
+                                            while (System.currentTimeMillis() < deadline) {
+                                                kotlinx.coroutines.delay(2_000)
+                                                status = box.authorizationStatus() ?: "unknown"
+                                                if (status != "pending") break
+                                            }
+                                            withContext(Dispatchers.Main) {
+                                                when (status) {
+                                                    "granted" -> {
+                                                        snackbar.showSnackbar("✅ Freebox autorisée — nouveau scan…")
+                                                        runScan()
+                                                    }
+                                                    "denied" -> snackbar.showSnackbar("❌ Autorisation refusée sur la box.")
+                                                    "timeout" -> snackbar.showSnackbar("⏱️ Demande expirée — réessaie.")
+                                                    else -> snackbar.showSnackbar("Autorisation non confirmée — réessaie.")
                                                 }
                                             }
                                         }

@@ -23,6 +23,16 @@ détectés : box Freebox, PC, appareils Xiaomi/HP, Synology…).
 
 ## Changelog
 
+### v1.9.20 — correctif MAC via Freebox (autorisation + version d'API)
+- **Autorisation Freebox réparée** : l'app poll désormais le statut après la
+  demande — c'est cette étape qui valide réellement le jeton. Sans elle, la box
+  n'était jamais autorisée, donc aucune MAC n'était récupérée. Après validation
+  sur l'écran de la box, un nouveau scan est lancé automatiquement.
+- **Version d'API Freebox dynamique** : découverte via `/api_version` au lieu de
+  « v9 » figé (l'API échouait si la box était en v8/v10/v13…).
+- Rappel : sur une Freebox, la table ARP système étant vide (Android 10+) et le
+  SNMP absent, l'API Freebox (autorisée) est la source fiable des MAC.
+
 ### v1.9.19 — navigateur DLNA + test Wake-on-LAN
 - **Navigateur DLNA** : menu ⋮ → « 🎬 Médias DLNA » découvre les serveurs
   multimédia (UPnP ContentDirectory) et parcourt dossiers/fichiers ; un fichier

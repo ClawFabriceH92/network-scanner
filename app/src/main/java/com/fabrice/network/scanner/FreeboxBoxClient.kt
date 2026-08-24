@@ -41,7 +41,45 @@ class FreeboxBoxClient(private val context: Context) : BoxClient {
     }
 
     override val name = "Freebox"
-    override val baseUrl = "http://192.168.0.254/api/v9" // cleartext autorisé par networkSecurityConfig
+
+    /** Hôte de la box (passerelle courante ; repli sur l'adresse Freebox usuelle). */
+    private fun gatewayHost(): String = NetworkInfoProvider.readGateway().ifBlank { "192.168.0.254" }
+
+    /** Base d'API par défaut si la découverte échoue. */
+    private fun defaultBase(): String = "http://${gatewayHost()}/api/v9"
+
+    @Volatile
+    private var apiBaseCache: String? = null
+
+    // Affiché à titre indicatif ; les requêtes utilisent la base découverte.
+    override val baseUrl: String get() = apiBaseCache ?: defaultBase()
+
+    /**
+     * Découvre dynamiquement la base d'API Freebox via `GET /api_version`
+     * (renvoie `api_base_url` = « /api/ » et `api_version` = « 13.0 »…). Corrige
+     * le problème du numéro de version figé (l'API échouait si la box n'était
+     * pas exactement en v9). Résultat mis en cache.
+     */
+    private fun discoverApiBase(): String {
+        apiBaseCache?.let { return it }
+        val host = gatewayHost()
+        val discovered = runCatching {
+            val conn = URL("http://$host/api_version").openConnection() as HttpURLConnection
+            conn.connectTimeout = 5_000
+            conn.readTimeout = 5_000
+            conn.setRequestProperty("User-Agent", "NetworkScanner/1.0")
+            if (conn.responseCode !in 200..299) { conn.disconnect(); return@runCatching null }
+            val text = conn.inputStream.bufferedReader().use { it.readText() }
+            conn.disconnect()
+            val o = JSONObject(text)
+            val apiBaseUrl = o.optString("api_base_url", "/api/").ifBlank { "/api/" }
+            val major = o.optString("api_version", "9.0").substringBefore('.').toIntOrNull() ?: 9
+            "http://$host${apiBaseUrl.trimEnd('/')}/v$major"
+        }.getOrNull()
+        val base = discovered ?: defaultBase()
+        apiBaseCache = base
+        return base
+    }
 
     private val prefs by lazy {
         context.getSharedPreferences("box_prefs", Context.MODE_PRIVATE)
@@ -60,7 +98,7 @@ class FreeboxBoxClient(private val context: Context) : BoxClient {
         timeoutMs: Int = 10_000
     ): JSONObject? {
         return try {
-            val conn = URL(baseUrl + path).openConnection() as HttpURLConnection
+            val conn = URL(discoverApiBase() + path).openConnection() as HttpURLConnection
             conn.requestMethod = method
             conn.connectTimeout = timeoutMs
             conn.readTimeout = timeoutMs
