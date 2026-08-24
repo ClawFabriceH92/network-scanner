@@ -151,6 +151,28 @@ class AdvancedProbesTest {
         assertEquals("http://10.0.0.2/song.mp3", item.url)
     }
 
+    // ---- Box SFR ----
+
+    @Test
+    fun sfr_parseHosts_extractsDevices() {
+        val xml = "<rsp stat=\"ok\">" +
+            "<host name=\"PC-Bureau\" ip=\"192.168.1.10\" mac=\"e0:70:ea:fb:1c:eb\" iface=\"lan1\" status=\"online\"/>" +
+            "<host name=\"Tel\" ip=\"192.168.1.20\" mac=\"aa:bb:cc:dd:ee:ff\" iface=\"wlan0\" status=\"offline\"/>" +
+            "</rsp>"
+        val hosts = SfrBoxClient.parseHosts(xml)
+        assertEquals(2, hosts.size)
+        assertEquals("e0:70:ea:fb:1c:eb", hosts[0].mac)
+        assertEquals("192.168.1.10", hosts[0].ip)
+        assertEquals("Ethernet", hosts[0].connectionType)
+        assertTrue(hosts[0].active)
+        assertEquals("WiFi", hosts[1].connectionType)
+    }
+
+    @Test
+    fun sfr_parseHosts_ignoresHostsWithoutMac() {
+        assertEquals(0, SfrBoxClient.parseHosts("<rsp stat=\"ok\"><host name=\"x\" ip=\"1.2.3.4\"/></rsp>").size)
+    }
+
     // ---- Latence ----
 
     @Test

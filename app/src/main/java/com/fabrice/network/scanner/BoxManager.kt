@@ -63,13 +63,19 @@ object BoxManager {
         val vendor = NetworkScanner.vendorFor(gatewayMac, oui)
 
         val type = classify(gateway, vendor)
+        // L'API SFR (lan.getHostsList, publique) est sondée activement pour lever
+        // l'ambiguïté SFR/Livebox sur 192.168.1.1 et reconnaître une box SFR même
+        // quand l'OUI de la passerelle est inconnu (ARP vide sur Android 10+).
         val client = when (type) {
             BoxType.FREEBOX -> FreeboxBoxClient(context)
             BoxType.BBOX -> BboxBoxClient()
-            BoxType.LIVEBOX -> LiveboxBoxClient(context)
-            // SFR : pas d'API fiable — on mémorise le nom mais pas de client.
-            BoxType.SFR -> null
-            null -> null
+            BoxType.LIVEBOX ->
+                if (SfrBoxClient.respondsToApi(gateway)) SfrBoxClient(gateway)
+                else LiveboxBoxClient(context)
+            BoxType.SFR ->
+                if (SfrBoxClient.respondsToApi(gateway)) SfrBoxClient(gateway) else null
+            null ->
+                if (SfrBoxClient.respondsToApi(gateway)) SfrBoxClient(gateway) else null
         }
         cachedClient = client
         cachedGateway = gateway

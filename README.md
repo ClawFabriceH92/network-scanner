@@ -23,15 +23,20 @@ détectés : box Freebox, PC, appareils Xiaomi/HP, Synology…).
 
 ## Changelog
 
-### v1.9.20 — correctif MAC via Freebox (autorisation + version d'API)
+### v1.9.20 — MAC via box : Freebox (corrigé) + SFR (nouveau)
+- **Box SFR / RED / Neufbox** : nouveau client via l'API locale publique
+  `http://<box>/api/1.0/?method=lan.getHostsList` (Sagemcom NB4/5/6). Récupère
+  MAC + IP + nom + type de connexion de tout le réseau, **sans autorisation**.
+  Détection active (sonde de l'API) pour distinguer SFR d'une Livebox sur
+  192.168.1.1.
 - **Autorisation Freebox réparée** : l'app poll désormais le statut après la
   demande — c'est cette étape qui valide réellement le jeton. Sans elle, la box
   n'était jamais autorisée, donc aucune MAC n'était récupérée. Après validation
   sur l'écran de la box, un nouveau scan est lancé automatiquement.
 - **Version d'API Freebox dynamique** : découverte via `/api_version` au lieu de
   « v9 » figé (l'API échouait si la box était en v8/v10/v13…).
-- Rappel : sur une Freebox, la table ARP système étant vide (Android 10+) et le
-  SNMP absent, l'API Freebox (autorisée) est la source fiable des MAC.
+- Rappel : sur Android 10+ la table ARP système est vide ; l'API de la box est
+  la source fiable des MAC de tout le réseau.
 
 ### v1.9.19 — navigateur DLNA + test Wake-on-LAN
 - **Navigateur DLNA** : menu ⋮ → « 🎬 Médias DLNA » découvre les serveurs
