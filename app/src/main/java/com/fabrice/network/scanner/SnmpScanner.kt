@@ -115,7 +115,12 @@ object SnmpScanner {
      *   [0] GetRequest { INTEGER request-id, INTEGER error=0, INTEGER index=0,
      *     SEQUENCE of varbinds } }.
      */
-    fun buildGetRequest(oids: List<String>, community: String = "public", requestId: Int = 1): ByteArray {
+    fun buildGetRequest(
+        oids: List<String>,
+        community: String = "public",
+        requestId: Int = 1,
+        pduTag: Int = 0xA0
+    ): ByteArray {
         val out = java.io.ByteArrayOutputStream()
         for (oid in oids) {
             val vb = tlv(0x30, encodeOid(oid) + tlv(0x05, ByteArray(0)))
@@ -123,7 +128,7 @@ object SnmpScanner {
         }
         val varbindList = tlv(0x30, out.toByteArray())
         val pdu = tlv(
-            0xA0,
+            pduTag,
             tlv(0x02, encodeInteger(requestId.toLong())) +
                 tlv(0x02, encodeInteger(0)) +
                 tlv(0x02, encodeInteger(0)) +
@@ -263,6 +268,55 @@ object SnmpScanner {
             if (m.isNotEmpty()) return m
         }
         return emptyMap()
+    }
+
+    /**
+     * Parcourt (SNMP walk, via GetNextRequest) tous les objets sous [baseOid] et
+     * retourne les varbinds. Communautés « public » puis « private ». Borné en
+     * lignes et en temps. À appeler depuis un thread IO.
+     */
+    fun walk(ip: String, baseOid: String, timeoutMs: Int = 1_500, maxRows: Int = 1_024): List<Varbind> {
+        for (community in listOf("public", "private")) {
+            val rows = walkCommunity(ip, baseOid, community, timeoutMs, maxRows)
+            if (rows.isNotEmpty()) return rows
+        }
+        return emptyList()
+    }
+
+    private fun walkCommunity(
+        ip: String,
+        baseOid: String,
+        community: String,
+        timeoutMs: Int,
+        maxRows: Int
+    ): List<Varbind> {
+        val out = mutableListOf<Varbind>()
+        try {
+            DatagramSocket().use { socket ->
+                socket.soTimeout = timeoutMs
+                val addr = InetAddress.getByName(ip)
+                var current = baseOid
+                var reqId = (System.currentTimeMillis() and 0x7FFFFFFF).toInt()
+                var i = 0
+                while (i < maxRows) {
+                    val req = buildGetRequest(listOf(current), community, reqId++, pduTag = 0xA1)
+                    socket.send(DatagramPacket(req, req.size, addr, PORT))
+                    val buf = ByteArray(4096)
+                    socket.receive(DatagramPacket(buf, buf.size))
+                    val vb = parseAllVarbinds(buf)?.firstOrNull() ?: break
+                    // Fin de sous-arbre : l'OID retourné sort de la branche.
+                    if (vb.oid != baseOid && !vb.oid.startsWith("$baseOid.")) break
+                    // endOfMibView (tag 0x82) / pas de valeur → stop.
+                    if (vb.tag == 0x82) break
+                    out.add(vb)
+                    current = vb.oid
+                    i++
+                }
+            }
+        } catch (e: Exception) {
+            // timeout / agent absent : on retourne ce qu'on a
+        }
+        return out
     }
 
     private fun getOidsCommunity(

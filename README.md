@@ -23,6 +23,12 @@ détectés : box Freebox, PC, appareils Xiaomi/HP, Synology…).
 
 ## Changelog
 
+### v1.9.17 — MAC via la table ARP du routeur (SNMP, agnostique marque)
+- **Table ARP de la passerelle en SNMP** (`ipNetToMediaPhysAddress`) : si le
+  routeur expose SNMP, l'app lit IP→MAC pour **tout** le réseau, quelle que soit
+  la marque (pas besoin d'API propriétaire de box). Complète /proc/net/arp (vide
+  sur Android 10+) et la fusion box. Ajout d'un walk SNMP (GetNext).
+
 ### v1.9.16 — adresses MAC (box + SNMP)
 - **MAC via la box** : sur Android 10+ la table ARP système est vidée, donc l'app
   ne pouvait pas lire les MAC des autres appareils. Les MAC connues de la box

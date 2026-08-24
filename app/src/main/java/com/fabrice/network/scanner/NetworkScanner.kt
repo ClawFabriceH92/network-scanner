@@ -345,7 +345,17 @@ object NetworkScanner {
                 readArp()
             })
         }
-        val allIps = (alive + tcpAlive + arp.keys + mdnsByIp.keys + wsdByIp.keys + upnpByIp.keys + nbnsByIp.keys).toSortedSet()
+        // Table ARP de la PASSERELLE via SNMP (ipNetToMediaPhysAddress) :
+        // agnostique à la marque, elle donne IP→MAC pour tout le réseau si le
+        // routeur expose SNMP — comble le vide de /proc/net/arp sur Android 10+.
+        // La table système reste prioritaire ; le SNMP comble les manques.
+        val gatewayForArp = NetworkInfoProvider.readGateway()
+        val snmpArp = if (scanPorts && !scanEconomy && gatewayForArp.isNotBlank()) {
+            runCatching { gatewayArpViaSnmp(gatewayForArp) }.getOrDefault(emptyMap())
+        } else emptyMap()
+        val arpAll = mergeArp(snmpArp, arp)
+
+        val allIps = (alive + tcpAlive + arpAll.keys + mdnsByIp.keys + wsdByIp.keys + upnpByIp.keys + nbnsByIp.keys).toSortedSet()
 
         // Cache en mémoire des fabricants résolus en ligne : évite d'interroger
         // deux fois le même préfixe OUI au cours d'un même scan.
@@ -354,7 +364,7 @@ object NetworkScanner {
         val localIp = ip
         val gatewayIp = NetworkInfoProvider.readGateway()
         val baseDevices = allIps.map { host ->
-            var mac = arp[host] ?: ""
+            var mac = arpAll[host] ?: ""
             var hostname = reverseDns(host)
             // Hôte « vivant » : a répondu au ping OU à une découverte multicast
             // (mDNS/WSD/UPnP) OU au broadcast NetBIOS. Un appareil qui répond
@@ -647,5 +657,37 @@ object NetworkScanner {
         if (raw.size != 6) return null
         if (raw.all { it.toInt() == 0 }) return null
         return raw.joinToString(":") { "%02x".format(it.toInt() and 0xFF) }
+    }
+
+    /** OID SNMP de la table ARP (ipNetToMediaPhysAddress) : IP → MAC. */
+    const val OID_IP_NET_TO_MEDIA = "1.3.6.1.2.1.4.22.1.2"
+
+    /**
+     * Lit la table ARP de la passerelle via SNMP (walk de ipNetToMediaPhysAddress)
+     * → map IP → MAC. Agnostique à la marque. Vide si le routeur n'expose pas
+     * SNMP. À appeler depuis un thread IO.
+     */
+    private fun gatewayArpViaSnmp(gatewayIp: String): Map<String, String> {
+        val rows = SnmpScanner.walk(gatewayIp, OID_IP_NET_TO_MEDIA)
+        val out = HashMap<String, String>()
+        for (vb in rows) {
+            parseArpRow(vb.oid, vb.raw)?.let { (ip, mac) -> out[ip] = mac }
+        }
+        return out
+    }
+
+    /**
+     * Extrait (IP, MAC) d'une ligne ipNetToMediaPhysAddress : l'OID se termine
+     * par « .<ifIndex>.a.b.c.d » et la valeur est la MAC (6 octets). null si
+     * la ligne n'est pas exploitable. Fonction pure — testable.
+     */
+    fun parseArpRow(oid: String, raw: ByteArray): Pair<String, String>? {
+        if (!oid.startsWith("$OID_IP_NET_TO_MEDIA.")) return null
+        val suffix = oid.removePrefix("$OID_IP_NET_TO_MEDIA.").split(".")
+        if (suffix.size < 5) return null
+        val ipParts = suffix.takeLast(4)
+        if (ipParts.any { (it.toIntOrNull() ?: -1) !in 0..255 }) return null
+        val mac = formatMac(raw) ?: return null
+        return ipParts.joinToString(".") to mac
     }
 }
