@@ -2,6 +2,7 @@ package com.fabrice.network.scanner
 
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.net.URL
 
 /**
  * « Banner grab » : lecture des bannières de services ouverts pour préciser
@@ -116,6 +117,94 @@ object BannerGrab {
             }
         } catch (e: Exception) {
             null
+        }
+    }
+
+    /**
+     * Récupère le <title> de la page web d'un hôte (identifie l'UI d'un NAS,
+     * routeur, caméra…). Essaie les ports web ouverts. Retourne « » si aucun.
+     */
+    fun httpTitle(ip: String, ports: List<Int>, timeoutMs: Int = 1_500): String {
+        for (port in HTTP_PORTS) {
+            if (port in ports) {
+                val body = runCatching { httpBody(ip, port, timeoutMs) }.getOrNull()
+                val title = body?.let { extractTitle(it) }
+                if (!title.isNullOrBlank()) return title
+            }
+        }
+        return ""
+    }
+
+    /** Extrait le contenu de la balise <title> d'un HTML. Testable. */
+    fun extractTitle(html: String): String? {
+        val m = Regex("<title[^>]*>(.*?)</title>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+            .find(html) ?: return null
+        return m.groupValues[1].replace(Regex("\\s+"), " ").trim().take(80).ifBlank { null }
+    }
+
+    /** Empreinte MD5 (hex) du favicon d'un hôte web, ou « » si absent. */
+    fun faviconHash(ip: String, ports: List<Int>, timeoutMs: Int = 1_500): String {
+        val port = HTTP_PORTS.firstOrNull { it in ports } ?: return ""
+        return try {
+            val scheme = if (port == 443 || port == 8443) "https" else "http"
+            val url = URL("$scheme://$ip:$port/favicon.ico")
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            if (conn is javax.net.ssl.HttpsURLConnection) {
+                val ctx = javax.net.ssl.SSLContext.getInstance("TLS")
+                ctx.init(null, arrayOf<javax.net.ssl.TrustManager>(object : javax.net.ssl.X509TrustManager {
+                    override fun checkClientTrusted(c: Array<java.security.cert.X509Certificate>?, a: String?) {}
+                    override fun checkServerTrusted(c: Array<java.security.cert.X509Certificate>?, a: String?) {}
+                    override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = arrayOf()
+                }), java.security.SecureRandom())
+                conn.sslSocketFactory = ctx.socketFactory
+                conn.setHostnameVerifier { _, _ -> true }
+            }
+            conn.connectTimeout = timeoutMs
+            conn.readTimeout = timeoutMs
+            if (conn.responseCode != 200) { conn.disconnect(); return "" }
+            val bytes = conn.inputStream.use { it.readBytes() }
+            conn.disconnect()
+            if (bytes.isEmpty()) "" else md5Hex(bytes)
+        } catch (e: Exception) {
+            ""
+        }
+    }
+
+    /** MD5 hexadécimal de données brutes. */
+    fun md5Hex(data: ByteArray): String {
+        val md = java.security.MessageDigest.getInstance("MD5")
+        return md.digest(data).joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+    }
+
+    /** GET brut d'une page web (corps limité à ~64 Ko). */
+    private fun httpBody(ip: String, port: Int, timeoutMs: Int): String? {
+        val scheme = if (port == 443 || port == 8443) "https" else "http"
+        val conn = URL("$scheme://$ip:$port/").openConnection() as java.net.HttpURLConnection
+        return try {
+            if (conn is javax.net.ssl.HttpsURLConnection) {
+                val ctx = javax.net.ssl.SSLContext.getInstance("TLS")
+                ctx.init(null, arrayOf<javax.net.ssl.TrustManager>(object : javax.net.ssl.X509TrustManager {
+                    override fun checkClientTrusted(c: Array<java.security.cert.X509Certificate>?, a: String?) {}
+                    override fun checkServerTrusted(c: Array<java.security.cert.X509Certificate>?, a: String?) {}
+                    override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = arrayOf()
+                }), java.security.SecureRandom())
+                conn.sslSocketFactory = ctx.socketFactory
+                conn.setHostnameVerifier { _, _ -> true }
+            }
+            conn.connectTimeout = timeoutMs
+            conn.readTimeout = timeoutMs
+            conn.instanceFollowRedirects = true
+            conn.setRequestProperty("User-Agent", "NetworkScanner")
+            val stream = if (conn.responseCode in 200..399) conn.inputStream else conn.errorStream
+            stream?.bufferedReader(Charsets.UTF_8)?.use { r ->
+                val buf = CharArray(65_536)
+                val n = r.read(buf)
+                if (n > 0) String(buf, 0, n) else ""
+            }
+        } catch (e: Exception) {
+            null
+        } finally {
+            runCatching { conn.disconnect() }
         }
     }
 

@@ -43,7 +43,22 @@ data class Device(
     /** Infos/statistiques imprimante (IPP + SNMP), null si non-imprimante. Non
      *  persisté dans le dernier scan — les stats sont historisées à part
      *  (PrinterStatsStore). */
-    val printer: PrinterProbe.PrinterInfo? = null
+    val printer: PrinterProbe.PrinterInfo? = null,
+    // --- Enrichissements v1.9.18 (transient, non persistés) ---
+    /** Titre de la page web (HTTP <title>) si un service web répond. */
+    val httpTitle: String = "",
+    /** Empreinte MD5 du favicon (identifie l'UI web), vide si absent. */
+    val httpFavicon: String = "",
+    /** Certificat TLS (443/8443/9443) : identité + sécurité. */
+    val tls: TlsProbe.TlsInfo? = null,
+    /** Flux RTSP/ONVIF (caméras) si le port 554 répond. */
+    val rtsp: RtspProbe.RtspInfo? = null,
+    /** UPnP-IGD (passerelle) : IP publique + redirections de ports. */
+    val igd: IgdProbe.IgdInfo? = null,
+    /** SNMP approfondi : n° de série, contact, nombre d'interfaces. */
+    val snmpSerial: String? = null,
+    val snmpContact: String? = null,
+    val snmpIfCount: Int? = null
 )
 
 /** Résultat d'un ping : vivant ? + TTL de la réponse (pour l'OS) + latence. */
@@ -345,7 +360,17 @@ object NetworkScanner {
                 readArp()
             })
         }
-        val allIps = (alive + tcpAlive + arp.keys + mdnsByIp.keys + wsdByIp.keys + upnpByIp.keys + nbnsByIp.keys).toSortedSet()
+        // Table ARP de la PASSERELLE via SNMP (ipNetToMediaPhysAddress) :
+        // agnostique à la marque, elle donne IP→MAC pour tout le réseau si le
+        // routeur expose SNMP — comble le vide de /proc/net/arp sur Android 10+.
+        // La table système reste prioritaire ; le SNMP comble les manques.
+        val gatewayForArp = NetworkInfoProvider.readGateway()
+        val snmpArp = if (scanPorts && !scanEconomy && gatewayForArp.isNotBlank()) {
+            runCatching { gatewayArpViaSnmp(gatewayForArp) }.getOrDefault(emptyMap())
+        } else emptyMap()
+        val arpAll = mergeArp(snmpArp, arp)
+
+        val allIps = (alive + tcpAlive + arpAll.keys + mdnsByIp.keys + wsdByIp.keys + upnpByIp.keys + nbnsByIp.keys).toSortedSet()
 
         // Cache en mémoire des fabricants résolus en ligne : évite d'interroger
         // deux fois le même préfixe OUI au cours d'un même scan.
@@ -354,7 +379,7 @@ object NetworkScanner {
         val localIp = ip
         val gatewayIp = NetworkInfoProvider.readGateway()
         val baseDevices = allIps.map { host ->
-            var mac = arp[host] ?: ""
+            var mac = arpAll[host] ?: ""
             var hostname = reverseDns(host)
             // Hôte « vivant » : a répondu au ping OU à une découverte multicast
             // (mDNS/WSD/UPnP) OU au broadcast NetBIOS. Un appareil qui répond
@@ -381,6 +406,14 @@ object NetworkScanner {
             if (nbns != null) {
                 if (mac.isBlank() && nbns.mac.isNotBlank()) mac = nbns.mac
                 if (hostname.isBlank() && nbns.name.isNotBlank()) hostname = nbns.name
+            }
+
+            // MAC via SNMP (ifPhysAddress) quand elle manque encore : sur Android
+            // 10+ la table ARP système est vide, mais un appareil qui expose SNMP
+            // (imprimante, NAS, routeur pro…) publie sa MAC. Seulement si le port
+            // 161 est ouvert, jamais bloquant, reporté en mode économie.
+            if (mac.isBlank() && responded && 161 in ports && !scanEconomy) {
+                mac = runCatching { snmpMac(host) }.getOrNull().orEmpty()
             }
 
             // MAC Docker (02:42) → fabricant « Docker » : détecté AVANT le test
@@ -414,6 +447,30 @@ object NetworkScanner {
             // timeout court, jamais bloquant. Économie d'énergie : reporté.
             val snmp = if (responded && 161 in ports && !scanEconomy) {
                 runCatching { SnmpScanner.probeBlocking(host) }.getOrNull()
+            } else null
+            // SNMP approfondi : n° de série, contact, nombre d'interfaces.
+            val snmpExtra = if (responded && 161 in ports && !scanEconomy) {
+                runCatching { snmpDetails(host) }.getOrNull()
+            } else null
+            // Fingerprint web : titre de page + empreinte favicon (identifie l'UI).
+            val hasWeb = responded && BannerGrab.HTTP_PORTS.any { it in ports }
+            val httpTitle = if (hasWeb && !scanEconomy) {
+                runCatching { BannerGrab.httpTitle(host, ports) }.getOrDefault("")
+            } else ""
+            val httpFavicon = if (hasWeb && !scanEconomy) {
+                runCatching { BannerGrab.faviconHash(host, ports) }.getOrDefault("")
+            } else ""
+            // Certificat TLS (identité + posture de sécurité).
+            val tls = if (responded && !scanEconomy && TlsProbe.TLS_PORTS.any { it in ports }) {
+                runCatching { TlsProbe.probe(host, ports) }.getOrNull()
+            } else null
+            // RTSP/ONVIF (caméras) si le port 554 est ouvert.
+            val rtsp = if (responded && 554 in ports && !scanEconomy) {
+                runCatching { RtspProbe.probe(host) }.getOrNull()
+            } else null
+            // UPnP-IGD : uniquement sur la passerelle (IP publique + redirections).
+            val igd = if (host == gatewayIp && !scanEconomy) {
+                runCatching { IgdProbe.discover() }.getOrNull()
             } else null
             // Infos UPnP éventuelles (friendlyName, fabricant, modèle…)
             var upnp = upnpByIp[host]
@@ -473,7 +530,15 @@ object NetworkScanner {
                 snmpName = snmp?.name,
                 snmpLocation = snmp?.location,
                 snmpUptime = snmp?.uptimeSeconds,
-                printer = printer
+                printer = printer,
+                httpTitle = httpTitle,
+                httpFavicon = httpFavicon,
+                tls = tls,
+                rtsp = rtsp,
+                igd = igd,
+                snmpSerial = snmpExtra?.serial,
+                snmpContact = snmpExtra?.contact,
+                snmpIfCount = snmpExtra?.ifCount
             )
             // Progression de la phase d'enrichissement (un hôte traité).
             if (doEnrich) {
@@ -614,4 +679,80 @@ object NetworkScanner {
     /** Premier élément non vide/non blanc d'une liste de valeurs, ou null. */
     private fun firstNonBlank(vararg values: String?): String? =
         values.firstOrNull { !it.isNullOrBlank() }?.trim()
+
+    /**
+     * MAC via SNMP (OID ifPhysAddress `1.3.6.1.2.1.2.2.1.6.<ifIndex>`). Interroge
+     * les premiers index d'interface et retourne la première MAC valide. « » si
+     * l'agent ne répond pas ou n'expose pas de MAC. À appeler depuis un thread IO.
+     */
+    private fun snmpMac(host: String): String {
+        val oids = listOf(
+            "1.3.6.1.2.1.2.2.1.6.1",
+            "1.3.6.1.2.1.2.2.1.6.2",
+            "1.3.6.1.2.1.2.2.1.6.3"
+        )
+        val vbs = SnmpScanner.getOids(host, oids, 1_500)
+        for (oid in oids) {
+            val raw = vbs[oid]?.raw ?: continue
+            formatMac(raw)?.let { return it }
+        }
+        return ""
+    }
+
+    /** Formate 6 octets bruts en MAC « aa:bb:cc:dd:ee:ff » ; null si invalide/nulle. */
+    fun formatMac(raw: ByteArray): String? {
+        if (raw.size != 6) return null
+        if (raw.all { it.toInt() == 0 }) return null
+        return raw.joinToString(":") { "%02x".format(it.toInt() and 0xFF) }
+    }
+
+    /** SNMP approfondi : n° de série, contact système, nombre d'interfaces. */
+    data class SnmpDetails(val serial: String?, val contact: String?, val ifCount: Int?)
+
+    private const val OID_SYS_CONTACT = "1.3.6.1.2.1.1.4.0"
+    private const val OID_IF_NUMBER = "1.3.6.1.2.1.2.1.0"
+    private const val OID_ENT_SERIAL = "1.3.6.1.2.1.47.1.1.1.1.11.1"
+
+    /** Lit les infos SNMP complémentaires (série/contact/interfaces). */
+    private fun snmpDetails(host: String): SnmpDetails? {
+        val vbs = SnmpScanner.getOids(host, listOf(OID_ENT_SERIAL, OID_SYS_CONTACT, OID_IF_NUMBER))
+        if (vbs.isEmpty()) return null
+        val serial = vbs[OID_ENT_SERIAL]?.textOrNull()?.trim()?.ifBlank { null }
+        val contact = vbs[OID_SYS_CONTACT]?.textOrNull()?.trim()?.ifBlank { null }
+        val ifCount = vbs[OID_IF_NUMBER]?.longOrNull()?.toInt()
+        if (serial == null && contact == null && ifCount == null) return null
+        return SnmpDetails(serial, contact, ifCount)
+    }
+
+    /** OID SNMP de la table ARP (ipNetToMediaPhysAddress) : IP → MAC. */
+    const val OID_IP_NET_TO_MEDIA = "1.3.6.1.2.1.4.22.1.2"
+
+    /**
+     * Lit la table ARP de la passerelle via SNMP (walk de ipNetToMediaPhysAddress)
+     * → map IP → MAC. Agnostique à la marque. Vide si le routeur n'expose pas
+     * SNMP. À appeler depuis un thread IO.
+     */
+    private fun gatewayArpViaSnmp(gatewayIp: String): Map<String, String> {
+        val rows = SnmpScanner.walk(gatewayIp, OID_IP_NET_TO_MEDIA)
+        val out = HashMap<String, String>()
+        for (vb in rows) {
+            parseArpRow(vb.oid, vb.raw)?.let { (ip, mac) -> out[ip] = mac }
+        }
+        return out
+    }
+
+    /**
+     * Extrait (IP, MAC) d'une ligne ipNetToMediaPhysAddress : l'OID se termine
+     * par « .<ifIndex>.a.b.c.d » et la valeur est la MAC (6 octets). null si
+     * la ligne n'est pas exploitable. Fonction pure — testable.
+     */
+    fun parseArpRow(oid: String, raw: ByteArray): Pair<String, String>? {
+        if (!oid.startsWith("$OID_IP_NET_TO_MEDIA.")) return null
+        val suffix = oid.removePrefix("$OID_IP_NET_TO_MEDIA.").split(".")
+        if (suffix.size < 5) return null
+        val ipParts = suffix.takeLast(4)
+        if (ipParts.any { (it.toIntOrNull() ?: -1) !in 0..255 }) return null
+        val mac = formatMac(raw) ?: return null
+        return ipParts.joinToString(".") to mac
+    }
 }

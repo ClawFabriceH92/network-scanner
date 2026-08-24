@@ -57,6 +57,40 @@ class NetworkScannerTest {
     }
 
     @Test
+    fun formatMac_formatsSixBytes() {
+        val raw = byteArrayOf(
+            0xE0.toByte(), 0x70, 0xEA.toByte(), 0xFB.toByte(), 0x1C, 0xEB.toByte()
+        )
+        assertEquals("e0:70:ea:fb:1c:eb", NetworkScanner.formatMac(raw))
+    }
+
+    @Test
+    fun formatMac_rejectsInvalid() {
+        assertNull(NetworkScanner.formatMac(byteArrayOf(1, 2, 3)))          // mauvaise taille
+        assertNull(NetworkScanner.formatMac(ByteArray(6)))                  // tout à zéro
+    }
+
+    @Test
+    fun parseArpRow_extractsIpAndMac() {
+        // ipNetToMediaPhysAddress.<ifIndex=2>.192.168.0.10 → MAC
+        val oid = "1.3.6.1.2.1.4.22.1.2.2.192.168.0.10"
+        val raw = byteArrayOf(
+            0xE0.toByte(), 0x70, 0xEA.toByte(), 0xFB.toByte(), 0x1C, 0xEB.toByte()
+        )
+        assertEquals(
+            "192.168.0.10" to "e0:70:ea:fb:1c:eb",
+            NetworkScanner.parseArpRow(oid, raw)
+        )
+    }
+
+    @Test
+    fun parseArpRow_rejectsWrongOidOrMac() {
+        val raw = ByteArray(6) { 1 }
+        assertNull(NetworkScanner.parseArpRow("1.3.6.1.2.1.1.1.0", raw))     // hors table ARP
+        assertNull(NetworkScanner.parseArpRow("1.3.6.1.2.1.4.22.1.2.2.10.0.0.1", ByteArray(3))) // MAC invalide
+    }
+
+    @Test
     fun vendorFor_normalizesMac() {
         val oui = mapOf("f4cae5" to "FREEBOX SAS")
         assertEquals("FREEBOX SAS", NetworkScanner.vendorFor("f4:ca:e5:4d:d3:e9", oui))

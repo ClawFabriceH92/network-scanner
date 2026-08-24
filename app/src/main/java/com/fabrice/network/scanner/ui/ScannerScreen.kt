@@ -117,6 +117,7 @@ import com.fabrice.network.scanner.DownloadUpdate
 import com.fabrice.network.scanner.FreeboxBoxClient
 import com.fabrice.network.scanner.GatewayWatcher
 import com.fabrice.network.scanner.HistoryStore
+import com.fabrice.network.scanner.LatencyHistoryStore
 import com.fabrice.network.scanner.NetworkScanner
 import com.fabrice.network.scanner.NetworkInfoProvider
 import com.fabrice.network.scanner.OuiDatabase
@@ -418,21 +419,29 @@ fun ScannerScreen() {
                 boxDevices = emptyList()
                 boxStatus = null
             }
-            devices = result
+            // Fusionne les MAC connues de la box (table DHCP/ARP) dans les fiches
+            // par IP : sur Android 10+, /proc/net/arp est vidé, donc la box est la
+            // source fiable des MAC de tout le réseau. Redonne aussi le fabricant.
+            val merged = mergeBoxMacs(result, boxDevices, oui)
+            devices = merged
             // Alerte push si une credential par défaut a été trouvée (même canal)
-            result.filter { it.defaultCred != null }.take(3).forEach { d ->
+            merged.filter { it.defaultCred != null }.take(3).forEach { d ->
                 NewDeviceNotifier.notifyDefaultCred(context, d)
             }
             withContext(Dispatchers.IO) {
-                ScanPersistence.save(context, result)
+                ScanPersistence.save(context, merged)
                 // Historise les stats des imprimantes trouvées + met à jour le
                 // profil « lieu de connexion » du réseau courant (instantané).
                 val nowMs = System.currentTimeMillis()
                 val statsStore = PrinterStatsStore(context)
-                result.forEach { runCatching { statsStore.record(it, nowMs) } }
+                val latencyStore = LatencyHistoryStore(context)
+                merged.forEach {
+                    runCatching { statsStore.record(it, nowMs) }
+                    runCatching { latencyStore.record(it, nowMs) }
+                }
                 runCatching {
                     val net = NetworkInfoProvider.read(context)
-                    ProfileStore(context).upsertCurrent(net, result, deviceStore, nowMs)
+                    ProfileStore(context).upsertCurrent(net, merged, deviceStore, nowMs)
                 }
             }
             // Blocages programmés : applique les fenêtres dues via l'API box
@@ -2337,6 +2346,8 @@ private fun DeviceDetailScreen(
                 if (device.product.isNotBlank() && device.product != device.model)
                     InfoRow("Produit", device.product)
                 if (device.os.isNotBlank()) InfoRow("Système", device.os)
+                device.connectionType?.takeIf { it.isNotBlank() }?.let { InfoRow("Connexion", it) }
+                if (device.snmpSerial != null) InfoRow("N° de série", device.snmpSerial)
                 if (device.hostname.isNotBlank()) InfoRow("Nom réseau", device.hostname)
                 device.latencyMs?.let { InfoRow("Latence", "$it ms", mono = true) }
                 device.ttl?.let { InfoRow("TTL", "$it", mono = true) }
@@ -2449,12 +2460,90 @@ private fun DeviceDetailScreen(
                 }
             }
 
+            // --- Web (titre de page + empreinte favicon) ---
+            if (device.httpTitle.isNotBlank() || device.httpFavicon.isNotBlank()) {
+                SectionCard("🌐 Web") {
+                    if (device.httpTitle.isNotBlank()) InfoRow("Titre", device.httpTitle)
+                    if (device.httpFavicon.isNotBlank())
+                        InfoRow("Favicon", device.httpFavicon.take(16) + "…", mono = true)
+                }
+            }
+
+            // --- TLS (certificat) ---
+            device.tls?.let { t ->
+                SectionCard("🔒 Certificat TLS") {
+                    InfoRow("Port", "${t.port}", mono = true)
+                    InfoRow("Nom (CN)", t.subject)
+                    InfoRow("Émetteur", t.issuer)
+                    InfoRow("Expire", formatDate(t.notAfterMs))
+                    if (t.expired) Text(
+                        "⚠️ Certificat expiré",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    if (t.selfSigned) Text(
+                        "⚠️ Certificat auto-signé",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            // --- RTSP / caméra ---
+            device.rtsp?.let { r ->
+                SectionCard("📷 Flux RTSP") {
+                    if (r.server.isNotBlank()) InfoRow("Serveur", r.server)
+                    InfoRow("URL", r.url, mono = true)
+                    Text(
+                        "Ouvre cette URL dans VLC pour voir le flux.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            // --- Passerelle : IP publique + redirections de ports (UPnP-IGD) ---
+            device.igd?.let { igd ->
+                SectionCard("🌍 Box / Internet (UPnP-IGD)") {
+                    if (igd.externalIp.isNotBlank()) InfoRow("IP publique", igd.externalIp, mono = true)
+                    if (igd.mappings.isEmpty()) {
+                        Text(
+                            "Aucune redirection de port active.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Text(
+                            "${igd.mappings.size} redirection(s) de port :",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        igd.mappings.forEach { m ->
+                            Text(
+                                "${m.protocol} ${m.externalPort} → ${m.internalClient}:${m.internalPort}" +
+                                    (if (m.description.isNotBlank()) "  (${m.description})" else ""),
+                                style = LocalMonoTextStyle.current,
+                                color = if (m.enabled) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+
+            // --- Latence (historique) ---
+            LatencySection(ScanHistory.identityKey(device))
+
             // --- SNMP ---
-            if (!device.snmpName.isNullOrBlank() || !device.snmpDescr.isNullOrBlank()) {
+            if (!device.snmpName.isNullOrBlank() || !device.snmpDescr.isNullOrBlank() ||
+                device.snmpContact != null || device.snmpIfCount != null
+            ) {
                 SectionCard("SNMP") {
                     device.snmpName?.takeIf { it.isNotBlank() }?.let { InfoRow("System Name", it) }
                     device.snmpDescr?.takeIf { it.isNotBlank() }?.let { InfoRow("Description", it) }
                     device.snmpLocation?.takeIf { it.isNotBlank() }?.let { InfoRow("Location", it) }
+                    device.snmpContact?.takeIf { it.isNotBlank() }?.let { InfoRow("Contact", it) }
+                    device.snmpIfCount?.let { InfoRow("Interfaces", "$it") }
                     device.snmpUptime?.let { InfoRow("Uptime", SnmpScanner.formatUptime(it)) }
                 }
             }
@@ -2658,6 +2747,29 @@ private fun PrinterSection(ip: String, key: String, info: PrinterProbe.PrinterIn
     }
 }
 
+/** Section latence : min/moyenne/max + gigue, depuis l'historique. */
+@Composable
+private fun LatencySection(key: String) {
+    val context = LocalContext.current
+    var stats by remember(key) { mutableStateOf<LatencyHistoryStore.Stats?>(null) }
+    LaunchedEffect(key) {
+        stats = withContext(Dispatchers.IO) {
+            runCatching { LatencyHistoryStore(context).stats(key) }.getOrNull()
+        }
+    }
+    stats?.let { s ->
+        SectionCard("📶 Latence") {
+            InfoRow("Échantillons", "${s.count}", mono = true)
+            InfoRow("Min / Moy / Max", "${s.min} / ${s.avg} / ${s.max} ms", mono = true)
+            InfoRow("Gigue", "${s.jitter} ms", mono = true)
+        }
+    }
+}
+
+/** Date lisible (jj/mm/aaaa) à partir d'un epoch millis. */
+private fun formatDate(ms: Long): String =
+    java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.FRANCE).format(java.util.Date(ms))
+
 /** Section partages SMB (dossiers partagés, y compris cachés). */
 @Composable
 private fun SmbSection(shares: List<SmbShareScanner.SmbShare>) {
@@ -2763,6 +2875,33 @@ private fun VulnSection(v: VulnScanner.DeviceVulns) {
 
 private fun sevLabel(cve: CveEntry): String =
     "${cve.severity}" + (cve.cvss?.let { " (${it})" } ?: "")
+
+/**
+ * Complète les appareils dont la MAC est absente à partir de la table de la box
+ * (baux DHCP), par correspondance d'IP. Sur Android 10+, la table ARP système
+ * est inaccessible : la box est la source fiable des MAC de tout le réseau. La
+ * MAC trouvée sert aussi à retrouver le fabricant via la base OUI.
+ */
+private fun mergeBoxMacs(
+    devices: List<Device>,
+    boxDevices: List<BoxClient.BoxDevice>,
+    oui: Map<String, String>
+): List<Device> {
+    if (boxDevices.isEmpty()) return devices
+    val byIp = boxDevices.filter { it.ip.isNotBlank() && it.mac.isNotBlank() }
+        .associateBy { it.ip }
+    return devices.map { d ->
+        if (d.mac.isNotBlank()) return@map d
+        val b = byIp[d.ip] ?: return@map d
+        val vendor = d.vendor.ifBlank { NetworkScanner.vendorFor(b.mac, oui) }
+        d.copy(
+            mac = b.mac,
+            vendor = vendor,
+            hostname = d.hostname.ifBlank { b.name },
+            connectionType = d.connectionType ?: b.connectionType
+        )
+    }
+}
 
 @Composable
 private fun sevColor(sev: String): Color {
