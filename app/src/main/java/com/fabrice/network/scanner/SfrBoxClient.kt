@@ -30,6 +30,26 @@ class SfrBoxClient(private val gateway: String) : BoxClient {
             hosts.ifEmpty { if (xml.contains("<rsp")) emptyList() else null }
         }
 
+    override suspend fun fetchConnection(): BoxConnection? =
+        withContext(Dispatchers.IO) {
+            val wan = httpGet("$baseUrl/?method=wan.getInfo") ?: return@withContext null
+            val dsl = httpGet("$baseUrl/?method=dsl.getInfo")
+            parseConnection(wan, dsl)
+        }
+
+    override suspend fun fetchSystem(): BoxSystem? =
+        withContext(Dispatchers.IO) {
+            val xml = httpGet("$baseUrl/?method=system.getInfo") ?: return@withContext null
+            parseSystem(xml)
+        }
+
+    override suspend fun fetchWifi(): BoxWifi? =
+        withContext(Dispatchers.IO) {
+            val info = httpGet("$baseUrl/?method=wlan.getInfo") ?: return@withContext null
+            val clients = httpGet("$baseUrl/?method=wlan.getClientList")
+            parseWifi(info, clients)
+        }
+
     companion object {
         /**
          * Vrai si l'hôte répond à l'API SFR (signature `<rsp …>` de la Neufbox).
@@ -94,6 +114,83 @@ class SfrBoxClient(private val gateway: String) : BoxClient {
 
         private fun attr(attrs: String, name: String): String =
             Regex("$name=\"([^\"]*)\"").find(attrs)?.groupValues?.get(1).orEmpty()
+
+        /** Valeur d'un attribut XML n'importe où dans la réponse (1er match). */
+        private fun anyAttr(xml: String, vararg names: String): String {
+            for (n in names) {
+                val v = Regex("\\b$n=\"([^\"]*)\"").find(xml)?.groupValues?.get(1)
+                if (!v.isNullOrBlank()) return v
+            }
+            return ""
+        }
+
+        /**
+         * Parse wan.getInfo (+ dsl.getInfo) → BoxConnection. Défensif : plusieurs
+         * noms d'attributs possibles. Fonction pure — testable.
+         */
+        fun parseConnection(wanXml: String, dslXml: String?): BoxConnection {
+            val mode = anyAttr(wanXml, "infra", "mode", "wan_mode", "type").lowercase()
+            val ip = anyAttr(wanXml, "ip_addr", "ipaddr", "ip", "wan_ip_addr")
+            val status = anyAttr(wanXml, "status", "wan_status", "state")
+            val uptime = anyAttr(wanXml, "uptime", "wan_uptime").toLongOrNull()
+            val down = anyAttr(wanXml, "rate_down", "down_rate", "downstream").toLongOrNull()
+            val up = anyAttr(wanXml, "rate_up", "up_rate", "upstream").toLongOrNull()
+            val snrDown = dslXml?.let { anyAttr(it, "noise_down", "snr_down", "attn_down_snr").toDoubleOrNull() }
+            val snrUp = dslXml?.let { anyAttr(it, "noise_up", "snr_up").toDoubleOrNull() }
+            val attnDown = dslXml?.let { anyAttr(it, "attenuation_down", "attn_down").toDoubleOrNull() }
+            val attnUp = dslXml?.let { anyAttr(it, "attenuation_up", "attn_up").toDoubleOrNull() }
+            return BoxConnection(
+                publicIp = ip,
+                connectionType = mode,
+                downloadRate = down,
+                uploadRate = up,
+                lineStatus = status,
+                uptimeSeconds = uptime,
+                snrDown = snrDown,
+                snrUp = snrUp,
+                attenuationDown = attnDown,
+                attenuationUp = attnUp
+            )
+        }
+
+        /** Parse wlan.getInfo (+ getClientList) → BoxWifi. Défensif. Testable. */
+        fun parseWifi(infoXml: String, clientsXml: String?): BoxWifi {
+            val clients = mutableListOf<WifiClient>()
+            if (clientsXml != null) {
+                Regex("<client\\b([^>]*)/?>", RegexOption.DOT_MATCHES_ALL).findAll(clientsXml).forEach { m ->
+                    val a = m.groupValues[1]
+                    val mac = attr(a, "mac")
+                    if (mac.isBlank()) return@forEach
+                    clients.add(
+                        WifiClient(
+                            mac = mac,
+                            ip = attr(a, "ip"),
+                            hostname = attr(a, "hostname").ifBlank { attr(a, "name") },
+                            rssi = attr(a, "rssi").ifBlank { attr(a, "signal") }.toIntOrNull()
+                        )
+                    )
+                }
+            }
+            return BoxWifi(
+                ssid = anyAttr(infoXml, "ssid"),
+                security = anyAttr(infoXml, "enc", "encryption", "security"),
+                channel = anyAttr(infoXml, "channel"),
+                band = anyAttr(infoXml, "band"),
+                clients = clients
+            )
+        }
+
+        /** Parse system.getInfo → BoxSystem. Défensif. Fonction pure — testable. */
+        fun parseSystem(xml: String): BoxSystem {
+            val temp = anyAttr(xml, "temperature", "temp").toDoubleOrNull()
+            return BoxSystem(
+                firmware = anyAttr(xml, "version", "firmware_version", "fw_version"),
+                uptimeSeconds = anyAttr(xml, "uptime").toLongOrNull(),
+                temperatureC = temp,
+                model = anyAttr(xml, "product", "model", "product_name"),
+                serial = anyAttr(xml, "serial", "serial_number")
+            )
+        }
     }
 
     private fun httpGet(url: String, timeoutMs: Int = 4_000): String? =

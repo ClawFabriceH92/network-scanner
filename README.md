@@ -23,6 +23,19 @@ détectés : box Freebox, PC, appareils Xiaomi/HP, Synology…).
 
 ## Changelog
 
+### v1.9.22 — écran « Ma box » : connexion, système, Wi-Fi, redémarrage
+- **Écran « 📡 Ma box »** (menu ⋮) désormais accessible : connexion WAN, débit
+  temps réel, Wi-Fi box, système, baux DHCP.
+- **Connexion / WAN** : IP publique, type d'accès, état de ligne, uptime, et
+  **diagnostic xDSL** (marge de bruit SNR, atténuation) sur ADSL/VDSL.
+- **Système box** : modèle, firmware, n° de série, uptime, température.
+- **Wi-Fi box** : SSID, sécurité, canal + clients Wi-Fi avec signal (RSSI).
+- **Redémarrer la box** : bouton avec confirmation (Freebox : réel ; autres :
+  selon authentification disponible).
+- Endpoints implémentés : SFR (`wan/dsl/system/wlan.getInfo`), Bbox
+  (`/api/v1/wan|xdsl|device`), Freebox (reboot authentifié). Best-effort selon
+  firmware.
+
 ### v1.9.21 — MAC via box : Bbox (corrigé) + Livebox (sysbus)
 - **Bbox (Bouygues)** : client réécrit sur la vraie API publique
   `GET /api/v1/hosts` (l'ancien code visait à tort l'API sysbus). Récupère

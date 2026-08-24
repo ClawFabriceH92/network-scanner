@@ -31,7 +31,16 @@ interface BoxClient {
         val reachable: Boolean,
         val lastActivity: String, // date lisible ou ""
         /** « WiFi » / « Ethernet » si la box l'expose, sinon null. */
-        val connectionType: String? = null
+        val connectionType: String? = null,
+        /** Signal Wi-Fi (RSSI dBm) vu par la box, si fourni. */
+        val rssi: Int? = null,
+        /** Débit de liaison (Mb/s) vu par la box, si fourni. */
+        val linkRateMbps: Int? = null,
+        /** Octets reçus/émis par l'appareil (compteurs box), si fournis. */
+        val rxBytes: Long? = null,
+        val txBytes: Long? = null,
+        /** Première apparition (date lisible), si fournie. */
+        val firstSeen: String = ""
     )
 
     /**
@@ -70,4 +79,10 @@ interface BoxClient {
 
     /** Rétablit l'accès d'un périphérique bloqué. */
     fun unblockDevice(mac: String): Boolean = false
+
+    /**
+     * Redémarre la box (action destructive : coupe Internet ~2 min). Nécessite
+     * en général une authentification. Retourne false par défaut (non supporté).
+     */
+    suspend fun reboot(): Boolean = false
 }
