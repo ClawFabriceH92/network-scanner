@@ -173,6 +173,39 @@ class AdvancedProbesTest {
         assertEquals(0, SfrBoxClient.parseHosts("<rsp stat=\"ok\"><host name=\"x\" ip=\"1.2.3.4\"/></rsp>").size)
     }
 
+    @Test
+    fun sfr_parseConnection_wanAndDsl() {
+        val wan = "<rsp stat=\"ok\"><wan status=\"up\" infra=\"adsl\" ip_addr=\"88.1.2.3\" uptime=\"3600\"/></rsp>"
+        val dsl = "<rsp stat=\"ok\"><dsl noise_down=\"12.5\" attenuation_down=\"20.0\"/></rsp>"
+        val c = SfrBoxClient.parseConnection(wan, dsl)
+        assertEquals("88.1.2.3", c.publicIp)
+        assertEquals("adsl", c.connectionType)
+        assertEquals(3600L, c.uptimeSeconds)
+        assertEquals(12.5, c.snrDown!!, 0.01)
+        assertEquals(20.0, c.attenuationDown!!, 0.01)
+    }
+
+    @Test
+    fun sfr_parseSystem_fields() {
+        val xml = "<rsp stat=\"ok\"><system version=\"NB6VAC-R4\" uptime=\"123456\" product=\"NB6VAC\" temperature=\"45\"/></rsp>"
+        val s = SfrBoxClient.parseSystem(xml)
+        assertEquals("NB6VAC-R4", s.firmware)
+        assertEquals("NB6VAC", s.model)
+        assertEquals(123456L, s.uptimeSeconds)
+        assertEquals(45.0, s.temperatureC!!, 0.01)
+    }
+
+    @Test
+    fun sfr_parseWifi_ssidAndClients() {
+        val info = "<rsp stat=\"ok\"><wlan ssid=\"Maison\" channel=\"6\" enc=\"WPA2\"/></rsp>"
+        val clients = "<rsp stat=\"ok\"><client mac=\"aa:bb:cc:dd:ee:ff\" ip=\"192.168.1.5\" hostname=\"Phone\" rssi=\"-55\"/></rsp>"
+        val w = SfrBoxClient.parseWifi(info, clients)
+        assertEquals("Maison", w.ssid)
+        assertEquals("6", w.channel)
+        assertEquals(1, w.clients.size)
+        assertEquals(-55, w.clients[0].rssi)
+    }
+
     // ---- Box Bbox ----
 
     @Test

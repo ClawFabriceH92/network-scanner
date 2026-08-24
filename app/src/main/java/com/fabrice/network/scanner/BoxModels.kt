@@ -27,7 +27,20 @@ data class BoxConnection(
     /** Débit descendant contractuel (bits/s) — null si non fourni. */
     val downloadRate: Long? = null,
     /** Débit montant contractuel (bits/s) — null si non fourni. */
-    val uploadRate: Long? = null
+    val uploadRate: Long? = null,
+    /** État de la ligne (« up »/« connected »…) si fourni. */
+    val lineStatus: String = "",
+    /** Uptime de la connexion WAN en secondes, si fourni. */
+    val uptimeSeconds: Long? = null,
+    // Diagnostic xDSL (null hors ADSL/VDSL) :
+    /** Marge de bruit (SNR) descendante en dB. */
+    val snrDown: Double? = null,
+    /** Marge de bruit (SNR) montante en dB. */
+    val snrUp: Double? = null,
+    /** Atténuation descendante en dB. */
+    val attenuationDown: Double? = null,
+    /** Atténuation montante en dB. */
+    val attenuationUp: Double? = null
 )
 
 /** Débit temps réel (octets/seconde) mesuré à un instant donné. */
@@ -60,5 +73,9 @@ data class BoxWifi(
 data class BoxSystem(
     val firmware: String = "",
     val uptimeSeconds: Long? = null,
-    val temperatureC: Double? = null
+    val temperatureC: Double? = null,
+    /** Modèle de la box (ex. « NB6VAC », « Freebox Delta »). */
+    val model: String = "",
+    /** Numéro de série, si fourni. */
+    val serial: String = ""
 )

@@ -366,6 +366,12 @@ class FreeboxBoxClient(private val context: Context) : BoxClient {
 
     override fun unblockDevice(mac: String): Boolean = setBlocked(mac, false)
 
+    override suspend fun reboot(): Boolean = withContext(Dispatchers.IO) {
+        val session = sessionToken() ?: return@withContext false
+        val r = http("POST", "/system/reboot/", token = session)
+        r?.optBoolean("success", false) == true
+    }
+
     private fun setBlocked(mac: String, blocked: Boolean): Boolean {
         return try {
             val normalized = mac.replace("-", ":").lowercase()

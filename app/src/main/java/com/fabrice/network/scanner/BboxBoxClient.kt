@@ -119,8 +119,49 @@ class BboxBoxClient(private val gateway: String = GATEWAY) : BoxClient {
             val json = httpGet("$baseUrl/wan/ip", 4_000) ?: return@withContext null
             runCatching {
                 val wan = extractFirst(json, "wan") ?: return@runCatching null
-                val ip = wan.optJSONObject("ip")?.optString("address", "") ?: ""
-                BoxConnection(publicIp = ip, connectionType = "")
+                val ipObj = wan.optJSONObject("ip")
+                val ip = ipObj?.optString("address", "") ?: ""
+                val status = ipObj?.optString("state", "") ?: ""
+                val type = wan.optJSONObject("link")?.optString("type", "") ?: ""
+                // xDSL (si ligne ADSL/VDSL) : /api/v1/wan/xdsl.
+                val xdslJson = httpGet("$baseUrl/wan/xdsl", 4_000)
+                var snrDown: Double? = null; var snrUp: Double? = null
+                var attnDown: Double? = null; var attnUp: Double? = null
+                if (xdslJson != null) runCatching {
+                    val xdsl = extractFirst(xdslJson, "wan")?.optJSONObject("xdsl")
+                    xdsl?.optJSONObject("down")?.let {
+                        snrDown = it.optDouble("snr").takeIf { v -> !v.isNaN() }
+                        attnDown = it.optDouble("attenuation").takeIf { v -> !v.isNaN() }
+                    }
+                    xdsl?.optJSONObject("up")?.let {
+                        snrUp = it.optDouble("snr").takeIf { v -> !v.isNaN() }
+                        attnUp = it.optDouble("attenuation").takeIf { v -> !v.isNaN() }
+                    }
+                }
+                BoxConnection(
+                    publicIp = ip,
+                    connectionType = type,
+                    lineStatus = status,
+                    snrDown = snrDown, snrUp = snrUp,
+                    attenuationDown = attnDown, attenuationUp = attnUp
+                )
+            }.getOrNull()
+        }
+
+    override suspend fun fetchSystem(): BoxSystem? =
+        withContext(Dispatchers.IO) {
+            val json = httpGet("$baseUrl/device", 4_000) ?: return@withContext null
+            runCatching {
+                val d = extractFirst(json, "device") ?: return@runCatching null
+                BoxSystem(
+                    firmware = d.optJSONObject("main")?.optString("version", "")
+                        ?: d.optString("version", ""),
+                    uptimeSeconds = d.optLong("uptime").takeIf { it > 0 },
+                    temperatureC = d.optJSONObject("temperature")?.optDouble("current")
+                        ?.takeIf { !it.isNaN() },
+                    model = d.optString("modelname", d.optString("model", "")),
+                    serial = d.optString("serialnumber", "")
+                )
             }.getOrNull()
         }
 

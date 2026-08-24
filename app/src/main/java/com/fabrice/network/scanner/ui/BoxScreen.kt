@@ -175,6 +175,41 @@ fun BoxScreen() {
             system?.let { SystemCard(it) }
             leases?.let { LeasesCard(it) }
 
+            // Redémarrage de la box (action destructive → confirmation).
+            if (client != null) {
+                Spacer(Modifier.height(8.dp))
+                var confirmReboot by remember { mutableStateOf(false) }
+                Button(
+                    onClick = { confirmReboot = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("♻️ Redémarrer la box") }
+                if (confirmReboot) {
+                    androidx.compose.material3.AlertDialog(
+                        onDismissRequest = { confirmReboot = false },
+                        title = { Text("Redémarrer la box ?") },
+                        text = { Text("La connexion Internet sera coupée ~2 minutes.") },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                confirmReboot = false
+                                val box = client
+                                scope.launch {
+                                    val ok = withContext(Dispatchers.IO) {
+                                        runCatching { box?.reboot() ?: false }.getOrDefault(false)
+                                    }
+                                    snackbar.showSnackbar(
+                                        if (ok) "Redémarrage demandé."
+                                        else "Redémarrage non supporté (ou authentification requise)."
+                                    )
+                                }
+                            }) { Text("Redémarrer") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { confirmReboot = false }) { Text("Annuler") }
+                        }
+                    )
+                }
+            }
+
             Spacer(Modifier.height(8.dp))
             SettingsCard(
                 client = client,
@@ -208,7 +243,16 @@ private fun ConnectionCard(c: BoxConnection) {
             Spacer(Modifier.height(8.dp))
             BoxInfoRow("IP publique", c.publicIp.ifBlank { "—" }, mono = true)
             BoxInfoRow("Type d'accès", connectionTypeLabel(c.connectionType))
+            if (c.lineStatus.isNotBlank()) BoxInfoRow("État ligne", c.lineStatus)
             BoxInfoRow("Débit contractuel", formatRates(c.downloadRate, c.uploadRate))
+            c.uptimeSeconds?.let { BoxInfoRow("Uptime connexion", formatUptime(it)) }
+            // Diagnostic xDSL (ADSL/VDSL uniquement).
+            if (c.snrDown != null || c.attenuationDown != null) {
+                c.snrDown?.let { BoxInfoRow("Marge de bruit ↓", "$it dB") }
+                c.snrUp?.let { BoxInfoRow("Marge de bruit ↑", "$it dB") }
+                c.attenuationDown?.let { BoxInfoRow("Atténuation ↓", "$it dB") }
+                c.attenuationUp?.let { BoxInfoRow("Atténuation ↑", "$it dB") }
+            }
         }
     }
 }
@@ -320,7 +364,9 @@ private fun SystemCard(s: BoxSystem) {
         Column(Modifier.padding(16.dp)) {
             Text("Système", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
+            if (s.model.isNotBlank()) BoxInfoRow("Modèle", s.model)
             BoxInfoRow("Firmware", s.firmware.ifBlank { "—" })
+            if (s.serial.isNotBlank()) BoxInfoRow("N° de série", s.serial)
             s.uptimeSeconds?.let { BoxInfoRow("Uptime", formatUptime(it)) }
             s.temperatureC?.let { BoxInfoRow("Température", "$it °C") }
         }

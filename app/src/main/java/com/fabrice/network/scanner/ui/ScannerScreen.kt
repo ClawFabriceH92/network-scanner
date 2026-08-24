@@ -794,6 +794,13 @@ fun ScannerScreen() {
                                         screen = 7
                                     }
                                 )
+                                DropdownMenuItem(
+                                    text = { Text("📡 Ma box") },
+                                    onClick = {
+                                        menuExpanded = false
+                                        screen = 8
+                                    }
+                                )
                             }
                         }
                     }
@@ -903,6 +910,8 @@ fun ScannerScreen() {
                 ProfilesScreen(onBack = { screen = 0 })
             } else if (screen == 7) {
                 DlnaScreen(onBack = { screen = 0 })
+            } else if (screen == 8) {
+                BoxScreen()
             } else {
                 // Léger fondu à la bascule d'onglet.
                 Crossfade(
