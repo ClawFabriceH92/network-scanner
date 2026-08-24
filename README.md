@@ -23,6 +23,18 @@ détectés : box Freebox, PC, appareils Xiaomi/HP, Synology…).
 
 ## Changelog
 
+### v1.9.14 — imprimantes (IPP), statistiques & profils de lieux
+- **Modèle d'imprimante exact via IPP** : requête `Get-Printer-Attributes` sur
+  le port 631 → `printer-make-and-model` (ex. « HP Color LaserJet MFP E57540 »),
+  état, emplacement, consommables. Repli SNMP si l'IPP est muet.
+- **Statistiques imprimante historisées** : compteur de pages (SNMP
+  `prtMarkerLifeCount`), niveaux de toner/encre et état sont enregistrés à
+  chaque scan (PrinterStatsStore) et affichés dans une section « 🖨️ Imprimante »
+  sur la fiche (barres de niveau + évolution du nombre de pages).
+- **Profils de lieux de connexion** : chaque réseau (SSID/passerelle) est
+  mémorisé avec un instantané des appareils, consultable plus tard via le menu
+  ⋮ → « 📍 Profils / Lieux » (même hors de ce réseau).
+
 ### v1.9.13 — 🌐 sur les ports web (liste) + libellé nav corrigé
 - **Repère site web dans la liste** : les pastilles de ports web affichent 🌐
   directement sur la carte de l'appareil (plus besoin d'ouvrir la fiche).

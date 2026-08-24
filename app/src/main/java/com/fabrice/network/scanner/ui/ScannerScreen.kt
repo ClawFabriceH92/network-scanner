@@ -122,6 +122,9 @@ import com.fabrice.network.scanner.NetworkInfoProvider
 import com.fabrice.network.scanner.OuiDatabase
 import com.fabrice.network.scanner.PdfAuditReport
 import com.fabrice.network.scanner.PortScanner
+import com.fabrice.network.scanner.PrinterProbe
+import com.fabrice.network.scanner.PrinterStatsStore
+import com.fabrice.network.scanner.ProfileStore
 import com.fabrice.network.scanner.ScanHistory
 import com.fabrice.network.scanner.ScanPersistence
 import com.fabrice.network.scanner.ScheduleStore
@@ -420,7 +423,18 @@ fun ScannerScreen() {
             result.filter { it.defaultCred != null }.take(3).forEach { d ->
                 NewDeviceNotifier.notifyDefaultCred(context, d)
             }
-            withContext(Dispatchers.IO) { ScanPersistence.save(context, result) }
+            withContext(Dispatchers.IO) {
+                ScanPersistence.save(context, result)
+                // Historise les stats des imprimantes trouvées + met à jour le
+                // profil « lieu de connexion » du réseau courant (instantané).
+                val nowMs = System.currentTimeMillis()
+                val statsStore = PrinterStatsStore(context)
+                result.forEach { runCatching { statsStore.record(it, nowMs) } }
+                runCatching {
+                    val net = NetworkInfoProvider.read(context)
+                    ProfileStore(context).upsertCurrent(net, result, deviceStore, nowMs)
+                }
+            }
             // Blocages programmés : applique les fenêtres dues via l'API box
             // (no-op rapide si aucune planification). Non-bloquant pour l'UI.
             val scheduledActions = withContext(Dispatchers.IO) {
@@ -708,6 +722,13 @@ fun ScannerScreen() {
                                     },
                                     enabled = devices.isNotEmpty() && !scanning
                                 )
+                                DropdownMenuItem(
+                                    text = { Text("📍 Profils / Lieux") },
+                                    onClick = {
+                                        menuExpanded = false
+                                        screen = 6
+                                    }
+                                )
                             }
                         }
                     }
@@ -813,6 +834,8 @@ fun ScannerScreen() {
                     onBack = { screen = 0 },
                     onDeviceClick = { selected = it }
                 )
+            } else if (screen == 6) {
+                ProfilesScreen(onBack = { screen = 0 })
             } else {
                 // Léger fondu à la bascule d'onglet.
                 Crossfade(
@@ -2324,6 +2347,12 @@ private fun DeviceDetailScreen(
                 }
             }
 
+            // --- Imprimante (IPP + SNMP) ---
+            val printerInfo = device.printer
+            if (printerInfo != null && printerInfo.hasData) {
+                PrinterSection(device.ip, ScanHistory.identityKey(device), printerInfo)
+            }
+
             // --- Présence (historique) ---
             if (presenceTimestamps.isNotEmpty()) {
                 SectionCard("Présence") {
@@ -2530,6 +2559,90 @@ private fun InfoRow(label: String, value: String, mono: Boolean = false) {
             value,
             style = if (mono) LocalMonoTextStyle.current else MaterialTheme.typography.bodyMedium
         )
+    }
+}
+
+/**
+ * Section « Imprimante » : modèle exact (IPP), état, compteur de pages (avec
+ * évolution depuis le dernier scan) et niveaux de consommables. L'historique
+ * des instantanés est chargé depuis PrinterStatsStore.
+ */
+@Composable
+private fun PrinterSection(ip: String, key: String, info: PrinterProbe.PrinterInfo) {
+    val context = LocalContext.current
+    var history by remember(key) { mutableStateOf<List<PrinterStatsStore.Snapshot>>(emptyList()) }
+    LaunchedEffect(key) {
+        history = withContext(Dispatchers.IO) {
+            runCatching { PrinterStatsStore(context).load(key) }.getOrDefault(emptyList())
+        }
+    }
+    SectionCard("🖨️ Imprimante") {
+        if (info.makeAndModel.isNotBlank()) InfoRow("Modèle", info.makeAndModel)
+        if (info.state.isNotBlank()) InfoRow("État", info.state)
+        if (info.location.isNotBlank()) InfoRow("Emplacement", info.location)
+        info.pageCount?.let { pages ->
+            // Évolution vs l'avant-dernier instantané historisé (pages imprimées
+            // depuis le scan précédent).
+            val prev = history.dropLast(1).lastOrNull { it.pageCount != null }?.pageCount
+            val delta = if (prev != null && pages >= prev) pages - prev else null
+            InfoRow(
+                "Pages imprimées",
+                "$pages" + (delta?.takeIf { it > 0 }?.let { " (+$it depuis le dernier scan)" } ?: ""),
+                mono = true
+            )
+        }
+        info.uptimeSeconds?.let { InfoRow("Uptime", SnmpScanner.formatUptime(it)) }
+        if (info.firmware.isNotBlank()) InfoRow("Firmware", info.firmware)
+        if (info.stateReasons.isNotEmpty()) {
+            InfoRow("Alertes", info.stateReasons.joinToString(", "))
+        }
+        if (info.supplies.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Consommables",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(4.dp))
+            info.supplies.forEach { s ->
+                val label = s.name.ifBlank { s.color.ifBlank { s.type } }.ifBlank { "Consommable" }
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.width(130.dp)
+                    )
+                    val lvl = s.levelPercent
+                    if (lvl != null) {
+                        LinearProgressIndicator(
+                            progress = { lvl / 100f },
+                            modifier = Modifier.weight(1f).height(8.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("$lvl %", style = LocalMonoTextStyle.current)
+                    } else {
+                        Text(
+                            "niveau inconnu",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+        if (history.size >= 2) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "${history.size} relevés enregistrés",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 

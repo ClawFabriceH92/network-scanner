@@ -215,6 +215,77 @@ object SnmpScanner {
         }
     }
 
+    /**
+     * Parse une réponse GetResponse et retourne TOUTES les varbinds (générique,
+     * pour interroger des OID arbitraires — ex. compteurs d'imprimante). null si
+     * la réponse est invalide ou porte une erreur SNMP.
+     */
+    fun parseAllVarbinds(buffer: ByteArray): List<Varbind>? {
+        return try {
+            val r = BerReader(buffer)
+            if (r.readByte() != 0x30) return null
+            r.readLength()
+            if (r.readByte() != 0x02) return null
+            r.readBytes(r.readLength()) // version
+            if (r.readByte() != 0x04) return null
+            r.readBytes(r.readLength()) // community
+            val pduTag = r.readByte()
+            if (pduTag != 0xA2 && pduTag != 0xA0) return null
+            r.readLength()
+            if (r.readByte() != 0x02) return null
+            r.readBytes(r.readLength()) // request-id
+            if (r.readByte() != 0x02) return null
+            val errStatus = r.readIntegerBytes(r.readLength())
+            if (r.readByte() != 0x02) return null
+            r.readBytes(r.readLength()) // error-index
+            if (errStatus != 0L) return null
+            if (r.readByte() != 0x30) return null
+            r.readLength() // varbind list
+            val out = mutableListOf<Varbind>()
+            while (r.hasMore()) {
+                val vb = readVarbind(r) ?: break
+                out.add(vb)
+            }
+            out
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * GetRequest générique multi-OID → map OID → Varbind (communautés « public »
+     * puis « private »). Vide si l'agent ne répond pas. À appeler depuis un
+     * thread IO.
+     */
+    fun getOids(ip: String, oids: List<String>, timeoutMs: Int = 1_500): Map<String, Varbind> {
+        for (community in listOf("public", "private")) {
+            val m = getOidsCommunity(ip, oids, community, timeoutMs)
+            if (m.isNotEmpty()) return m
+        }
+        return emptyMap()
+    }
+
+    private fun getOidsCommunity(
+        ip: String,
+        oids: List<String>,
+        community: String,
+        timeoutMs: Int
+    ): Map<String, Varbind> {
+        return try {
+            DatagramSocket().use { socket ->
+                socket.soTimeout = timeoutMs
+                val req = buildGetRequest(oids, community, (System.currentTimeMillis() and 0x7FFFFFFF).toInt())
+                val addr = InetAddress.getByName(ip)
+                socket.send(DatagramPacket(req, req.size, addr, PORT))
+                val buf = ByteArray(4096)
+                socket.receive(DatagramPacket(buf, buf.size))
+                parseAllVarbinds(buf)?.associateBy { it.oid } ?: emptyMap()
+            }
+        } catch (e: Exception) {
+            emptyMap()
+        }
+    }
+
     /** Lit un varbind SEQUENCE { OID, valeur } depuis le lecteur courant. */
     private fun readVarbind(r: BerReader): Varbind? {
         if (r.readByte() != 0x30) return null
