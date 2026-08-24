@@ -23,6 +23,13 @@ détectés : box Freebox, PC, appareils Xiaomi/HP, Synology…).
 
 ## Changelog
 
+### v1.9.15 — compteurs imprimante : scans & copies
+- **Nombre de numérisations et de copies** en plus des impressions, via la page
+  d'usage EWS HP `/DevMgmt/ProductUsageDyn.xml` (impressions / scans ADF+vitre /
+  copies). Affichés et historisés sur la fiche (« Numérisations », « Copies »)
+  avec évolution depuis le dernier scan. HTTP puis HTTPS (certificat auto-signé
+  accepté pour cette lecture locale). Repli SNMP pour les impressions.
+
 ### v1.9.14 — imprimantes (IPP), statistiques & profils de lieux
 - **Modèle d'imprimante exact via IPP** : requête `Get-Printer-Attributes` sur
   le port 631 → `printer-make-and-model` (ex. « HP Color LaserJet MFP E57540 »),

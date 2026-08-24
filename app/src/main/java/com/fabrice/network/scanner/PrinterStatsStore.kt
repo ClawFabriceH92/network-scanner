@@ -23,6 +23,8 @@ class PrinterStatsStore(context: Context) {
         val makeAndModel: String,
         val state: String,
         val pageCount: Long?,
+        val scanCount: Long? = null,
+        val copyCount: Long? = null,
         val supplies: List<PrinterProbe.Supply>
     )
 
@@ -46,6 +48,8 @@ class PrinterStatsStore(context: Context) {
         val last = existing.lastOrNull()
         val unchanged = last != null &&
             last.pageCount == p.pageCount &&
+            last.scanCount == p.scanCount &&
+            last.copyCount == p.copyCount &&
             last.supplies.map { it.levelPercent } == p.supplies.map { it.levelPercent } &&
             last.state == p.state
         if (unchanged) return
@@ -55,6 +59,8 @@ class PrinterStatsStore(context: Context) {
                 makeAndModel = p.makeAndModel,
                 state = p.state,
                 pageCount = p.pageCount,
+                scanCount = p.scanCount,
+                copyCount = p.copyCount,
                 supplies = p.supplies
             )
         )
@@ -75,6 +81,8 @@ class PrinterStatsStore(context: Context) {
                     makeAndModel = o.optString("model", ""),
                     state = o.optString("state", ""),
                     pageCount = if (o.isNull("pages")) null else o.optLong("pages"),
+                    scanCount = if (o.isNull("scans")) null else o.optLong("scans"),
+                    copyCount = if (o.isNull("copies")) null else o.optLong("copies"),
                     supplies = parseSupplies(o.optJSONArray("supplies"))
                 )
             }
@@ -94,6 +102,8 @@ class PrinterStatsStore(context: Context) {
             o.put("model", s.makeAndModel)
             o.put("state", s.state)
             o.put("pages", s.pageCount ?: JSONObject.NULL)
+            o.put("scans", s.scanCount ?: JSONObject.NULL)
+            o.put("copies", s.copyCount ?: JSONObject.NULL)
             val sup = JSONArray()
             s.supplies.forEach { m ->
                 sup.put(
