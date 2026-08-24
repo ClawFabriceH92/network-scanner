@@ -39,7 +39,11 @@ data class Device(
     val defaultCred: String? = null,
     val credTested: Boolean = false,
     /** « WiFi » / « Ethernet » si connu (via les interfaces de la box), sinon null. */
-    val connectionType: String? = null
+    val connectionType: String? = null,
+    /** Infos/statistiques imprimante (IPP + SNMP), null si non-imprimante. Non
+     *  persisté dans le dernier scan — les stats sont historisées à part
+     *  (PrinterStatsStore). */
+    val printer: PrinterProbe.PrinterInfo? = null
 )
 
 /** Résultat d'un ping : vivant ? + TTL de la réponse (pour l'OS) + latence. */
@@ -423,8 +427,18 @@ object NetworkScanner {
             val wsd = wsdByIp[host]
             val fp = ServiceFingerprint.identify(banner)
             val nmap = NmapSignatures.identify(listOf(banner))
-            val product = firstNonBlank(fp?.product, nmap?.displayName(), md?.model, upnp?.modelName).orEmpty()
-            val model = firstNonBlank(md?.model, upnp?.modelName).orEmpty()
+            // Imprimante : IPP (modèle exact « printer-make-and-model ») + SNMP
+            // (compteur de pages, consommables). Seulement si un port imprimante
+            // est ouvert, jamais bloquant. Reporté en mode économie d'énergie.
+            val printer = if (responded && !scanEconomy &&
+                (631 in ports || 9100 in ports || 515 in ports)
+            ) {
+                runCatching { PrinterProbe.probe(host) }.getOrNull()?.takeIf { it.hasData }
+            } else null
+            val product = firstNonBlank(
+                printer?.makeAndModel, fp?.product, nmap?.displayName(), md?.model, upnp?.modelName
+            ).orEmpty()
+            val model = firstNonBlank(md?.model, upnp?.modelName, printer?.makeAndModel).orEmpty()
             if (hostname.isBlank()) {
                 hostname = firstNonBlank(md?.name, upnp?.friendlyName).orEmpty()
             }
@@ -458,7 +472,8 @@ object NetworkScanner {
                 snmpDescr = snmp?.descr,
                 snmpName = snmp?.name,
                 snmpLocation = snmp?.location,
-                snmpUptime = snmp?.uptimeSeconds
+                snmpUptime = snmp?.uptimeSeconds,
+                printer = printer
             )
             // Progression de la phase d'enrichissement (un hôte traité).
             if (doEnrich) {
