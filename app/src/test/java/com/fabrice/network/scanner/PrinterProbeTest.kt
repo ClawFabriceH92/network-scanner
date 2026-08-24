@@ -88,6 +88,51 @@ class PrinterProbeTest {
         assertEquals("", PrinterProbe.stateLabel(null))
     }
 
+    // ---- Page d'usage HP (ProductUsageDyn.xml) ----
+
+    private val hpUsageXml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <pudyn:ProductUsageDyn xmlns:pudyn="http://www.hp.com/pudyn" xmlns:dd="http://www.hp.com/dd">
+          <pudyn:PrinterSubunit>
+            <dd:TotalImpressions>15234</dd:TotalImpressions>
+            <dd:ColorImpressions>3234</dd:ColorImpressions>
+            <dd:MonochromeImpressions>12000</dd:MonochromeImpressions>
+          </pudyn:PrinterSubunit>
+          <pudyn:ScannerEngineSubunit>
+            <dd:AdfImages>500</dd:AdfImages>
+            <dd:FlatbedImages>342</dd:FlatbedImages>
+          </pudyn:ScannerEngineSubunit>
+          <pudyn:CopyApplicationSubunit>
+            <dd:TotalImpressions>420</dd:TotalImpressions>
+          </pudyn:CopyApplicationSubunit>
+        </pudyn:ProductUsageDyn>
+    """.trimIndent()
+
+    @Test
+    fun parseHpUsage_extractsPrintScanCopy() {
+        val u = PrinterProbe.parseHpUsage(hpUsageXml)!!
+        assertEquals(15234L, u.printImpressions)
+        assertEquals(842L, u.scanImages)   // 500 ADF + 342 flatbed
+        assertEquals(420L, u.copyImpressions)
+    }
+
+    @Test
+    fun parseHpUsage_preferScanImagesWhenPresent() {
+        val xml = """
+            <pudyn:ProductUsageDyn xmlns:pudyn="x" xmlns:dd="y">
+              <pudyn:PrinterSubunit><dd:TotalImpressions>10</dd:TotalImpressions></pudyn:PrinterSubunit>
+              <pudyn:ScannerEngineSubunit><dd:ScanImages>77</dd:ScanImages></pudyn:ScannerEngineSubunit>
+            </pudyn:ProductUsageDyn>
+        """.trimIndent()
+        val u = PrinterProbe.parseHpUsage(xml)!!
+        assertEquals(77L, u.scanImages)
+    }
+
+    @Test
+    fun parseHpUsage_nullOnUnrelatedXml() {
+        assertNull(PrinterProbe.parseHpUsage("<html><body>hello</body></html>"))
+    }
+
     @Test
     fun buildRequest_isWellFormedIpp() {
         val req = PrinterProbe.buildGetPrinterAttributes("ipp://192.168.0.10/ipp/print")

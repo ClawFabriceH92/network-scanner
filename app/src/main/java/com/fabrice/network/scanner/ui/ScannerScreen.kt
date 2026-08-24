@@ -2591,6 +2591,18 @@ private fun PrinterSection(ip: String, key: String, info: PrinterProbe.PrinterIn
                 mono = true
             )
         }
+        info.scanCount?.let { scans ->
+            val prev = history.dropLast(1).lastOrNull { it.scanCount != null }?.scanCount
+            val delta = if (prev != null && scans >= prev) scans - prev else null
+            InfoRow(
+                "Numérisations",
+                "$scans" + (delta?.takeIf { it > 0 }?.let { " (+$it)" } ?: ""),
+                mono = true
+            )
+        }
+        info.copyCount?.let { copies ->
+            InfoRow("Copies", "$copies", mono = true)
+        }
         info.uptimeSeconds?.let { InfoRow("Uptime", SnmpScanner.formatUptime(it)) }
         if (info.firmware.isNotBlank()) InfoRow("Firmware", info.firmware)
         if (info.stateReasons.isNotEmpty()) {

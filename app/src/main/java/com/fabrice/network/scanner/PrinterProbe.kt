@@ -34,13 +34,22 @@ object PrinterProbe {
         val stateReasons: List<String> = emptyList(),
         val supplies: List<Supply> = emptyList(),
         val pageCount: Long? = null,
+        val scanCount: Long? = null,
+        val copyCount: Long? = null,
         val uptimeSeconds: Long? = null,
         val firmware: String = ""
     ) {
         val hasData: Boolean
             get() = makeAndModel.isNotBlank() || supplies.isNotEmpty() ||
-                pageCount != null || state.isNotBlank()
+                pageCount != null || scanCount != null || state.isNotBlank()
     }
+
+    /** Compteurs d'usage lus sur la page EWS HP (impressions/scans/copies). */
+    data class UsageCounters(
+        val printImpressions: Long? = null,
+        val scanImages: Long? = null,
+        val copyImpressions: Long? = null
+    )
 
     // OID Printer-MIB : compteur de pages « à vie » du marqueur principal.
     private const val OID_MARKER_LIFE_COUNT = "1.3.6.1.2.1.43.10.2.1.4.1.1"
@@ -65,18 +74,31 @@ object PrinterProbe {
      */
     fun probe(ip: String, timeoutMs: Int = 2_500): PrinterInfo? {
         val ipp = runCatching { ippGetPrinterAttributes(ip, timeoutMs) }.getOrNull()
-        val pageCount = runCatching { snmpPageCount(ip, timeoutMs) }.getOrNull()
+        val snmpPages = runCatching { snmpPageCount(ip, timeoutMs) }.getOrNull()
+        // Page d'usage EWS (HP FutureSmart…) : impressions + scans + copies.
+        val usage = runCatching { fetchUsageCounters(ip, timeoutMs) }.getOrNull()
+
+        // Priorité pour les pages imprimées : usage EWS > SNMP > attribut IPP.
+        val pageCount = usage?.printImpressions ?: snmpPages ?: ipp?.pageCount
 
         if (ipp != null) {
-            return ipp.copy(pageCount = pageCount ?: ipp.pageCount)
+            return ipp.copy(
+                pageCount = pageCount,
+                scanCount = usage?.scanImages,
+                copyCount = usage?.copyImpressions
+            )
         }
         // Repli SNMP : modèle via sysDescr si l'IPP est muet (631 fermé).
         val snmp = runCatching { SnmpScanner.probeBlocking(ip, timeoutMs) }.getOrNull()
-        if (snmp?.descr.isNullOrBlank() && pageCount == null) return null
+        if (snmp?.descr.isNullOrBlank() && pageCount == null &&
+            usage?.scanImages == null
+        ) return null
         return PrinterInfo(
             makeAndModel = snmp?.descr?.take(120)?.trim().orEmpty(),
             uptimeSeconds = snmp?.uptimeSeconds,
-            pageCount = pageCount
+            pageCount = pageCount,
+            scanCount = usage?.scanImages,
+            copyCount = usage?.copyImpressions
         )
     }
 
@@ -84,6 +106,98 @@ object PrinterProbe {
     private fun snmpPageCount(ip: String, timeoutMs: Int): Long? {
         val vbs = SnmpScanner.getOids(ip, listOf(OID_MARKER_LIFE_COUNT), timeoutMs)
         return vbs[OID_MARKER_LIFE_COUNT]?.longOrNull()
+    }
+
+    // ---------------------------------------------- Compteurs d'usage (EWS HP)
+
+    /** Endpoint d'usage standard des imprimantes HP (FutureSmart et web JetDirect). */
+    private const val HP_USAGE_PATH = "/DevMgmt/ProductUsageDyn.xml"
+
+    /**
+     * Récupère les compteurs d'usage via la page EWS HP `ProductUsageDyn.xml`
+     * (impressions / scans / copies). Essaie HTTP puis HTTPS (certificat
+     * auto-signé accepté pour cette lecture locale). null si indisponible
+     * (imprimante non-HP ou page absente).
+     */
+    private fun fetchUsageCounters(ip: String, timeoutMs: Int): UsageCounters? {
+        for (scheme in listOf("http", "https")) {
+            val xml = runCatching { httpGet("$scheme://$ip$HP_USAGE_PATH", timeoutMs) }.getOrNull()
+            if (!xml.isNullOrBlank()) {
+                val counters = parseHpUsage(xml)
+                if (counters != null) return counters
+            }
+        }
+        return null
+    }
+
+    /** GET simple. En HTTPS, accepte les certificats auto-signés (EWS local). */
+    private fun httpGet(url: String, timeoutMs: Int): String? {
+        val conn = URL(url).openConnection() as HttpURLConnection
+        return try {
+            if (conn is javax.net.ssl.HttpsURLConnection) {
+                val ctx = javax.net.ssl.SSLContext.getInstance("TLS")
+                val trustAll = arrayOf<javax.net.ssl.TrustManager>(object : javax.net.ssl.X509TrustManager {
+                    override fun checkClientTrusted(c: Array<java.security.cert.X509Certificate>?, a: String?) {}
+                    override fun checkServerTrusted(c: Array<java.security.cert.X509Certificate>?, a: String?) {}
+                    override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = arrayOf()
+                })
+                ctx.init(null, trustAll, java.security.SecureRandom())
+                conn.sslSocketFactory = ctx.socketFactory
+                conn.setHostnameVerifier { _, _ -> true }
+            }
+            conn.connectTimeout = timeoutMs
+            conn.readTimeout = timeoutMs
+            conn.setRequestProperty("User-Agent", "NetworkScanner")
+            if (conn.responseCode != 200) return null
+            conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+        } catch (e: Exception) {
+            null
+        } finally {
+            runCatching { conn.disconnect() }
+        }
+    }
+
+    /**
+     * Parse la page HP `ProductUsageDyn.xml` et extrait les compteurs d'usage.
+     * Robuste aux préfixes de namespace (pudyn:/dd:) : on cible les noms locaux.
+     * Fonction pure — testable. null si aucun compteur trouvé.
+     */
+    fun parseHpUsage(xml: String): UsageCounters? {
+        // Impressions : TotalImpressions du sous-unité imprimante.
+        val printerBlock = extractBlock(xml, "PrinterSubunit") ?: xml
+        val print = extractLong(printerBlock, "TotalImpressions")
+
+        // Scans : ScanImages, sinon somme AdfImages + FlatbedImages.
+        val scanBlock = extractBlock(xml, "ScannerEngineSubunit")
+            ?: extractBlock(xml, "ScannerSubunit")
+        val scan = if (scanBlock != null) {
+            extractLong(scanBlock, "ScanImages")
+                ?: run {
+                    val adf = extractLong(scanBlock, "AdfImages")
+                    val fb = extractLong(scanBlock, "FlatbedImages")
+                    if (adf != null || fb != null) (adf ?: 0L) + (fb ?: 0L) else null
+                }
+        } else null
+
+        // Copies : TotalImpressions du sous-unité copie.
+        val copy = extractBlock(xml, "CopyApplicationSubunit")?.let {
+            extractLong(it, "TotalImpressions")
+        }
+
+        if (print == null && scan == null && copy == null) return null
+        return UsageCounters(printImpressions = print, scanImages = scan, copyImpressions = copy)
+    }
+
+    /** Extrait le contenu d'un élément par nom LOCAL (ignore le préfixe ns). */
+    private fun extractBlock(xml: String, localName: String): String? {
+        val re = Regex("<(?:\\w+:)?$localName\\b[^>]*>(.*?)</(?:\\w+:)?$localName>", RegexOption.DOT_MATCHES_ALL)
+        return re.find(xml)?.groupValues?.get(1)
+    }
+
+    /** Extrait la première valeur entière d'un élément par nom LOCAL. */
+    private fun extractLong(xml: String, localName: String): Long? {
+        val re = Regex("<(?:\\w+:)?$localName\\b[^>]*>\\s*(\\d+)")
+        return re.find(xml)?.groupValues?.get(1)?.toLongOrNull()
     }
 
     // --------------------------------------------------------------- IPP I/O
