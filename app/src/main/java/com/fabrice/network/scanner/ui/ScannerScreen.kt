@@ -118,6 +118,7 @@ import com.fabrice.network.scanner.FreeboxBoxClient
 import com.fabrice.network.scanner.GatewayWatcher
 import com.fabrice.network.scanner.HistoryStore
 import com.fabrice.network.scanner.LatencyHistoryStore
+import com.fabrice.network.scanner.LiveboxBoxClient
 import com.fabrice.network.scanner.NetworkScanner
 import com.fabrice.network.scanner.NetworkInfoProvider
 import com.fabrice.network.scanner.OuiDatabase
@@ -254,6 +255,9 @@ fun ScannerScreen() {
     // le check silencieux détecte une nouvelle version).
     var showUpdateDialog by remember { mutableStateOf(false) }
     var updateDialogShown by remember { mutableStateOf(false) }
+    // Dialogue de mot de passe Livebox (API sysbus, admin).
+    var liveboxPwdDialog by remember { mutableStateOf(false) }
+    var liveboxPwdInput by remember { mutableStateOf("") }
 
     // --- Ergonomie : recherche / tri / filtres / regroupement ---
     var searchQuery by remember { mutableStateOf("") }
@@ -626,6 +630,49 @@ fun ScannerScreen() {
     // lieu de quitter l'application.
     BackHandler(enabled = screen != 0) { screen = 0 }
 
+    // Dialogue mot de passe Livebox (API sysbus admin).
+    if (liveboxPwdDialog) {
+        AlertDialog(
+            onDismissRequest = { liveboxPwdDialog = false },
+            title = { Text("Mot de passe Livebox") },
+            text = {
+                Column {
+                    Text(
+                        "Saisis le mot de passe d'administration de la Livebox " +
+                            "(interface http://livebox, identifiant « admin »).",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = liveboxPwdInput,
+                        onValueChange = { liveboxPwdInput = it },
+                        singleLine = true,
+                        label = { Text("Mot de passe admin") }
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val pwd = liveboxPwdInput
+                    liveboxPwdDialog = false
+                    liveboxPwdInput = ""
+                    if (pwd.isNotBlank()) {
+                        scope.launch(Dispatchers.IO) {
+                            LiveboxBoxClient(context).setPassword(pwd)
+                            withContext(Dispatchers.Main) {
+                                snackbar.showSnackbar("Mot de passe enregistré — nouveau scan…")
+                                runScan()
+                            }
+                        }
+                    }
+                }) { Text("Valider") }
+            },
+            dismissButton = {
+                TextButton(onClick = { liveboxPwdDialog = false; liveboxPwdInput = "" }) { Text("Annuler") }
+            }
+        )
+    }
+
     // Pop-up « mise à jour disponible » (détectée au lancement).
     val pendingUpdate = updateInfo
     if (showUpdateDialog && pendingUpdate != null) {
@@ -963,7 +1010,18 @@ fun ScannerScreen() {
                                         // NetworkOnMainThreadException.
                                         scope.launch(Dispatchers.IO) {
                                             val box = BoxManager.detect(context)
-                                            if (box !is FreeboxBoxClient) return@launch
+                                            // Livebox : nécessite le mot de passe admin (API sysbus)
+                                            // → dialogue de saisie. Bbox/SFR : API publique, pas d'auth.
+                                            if (box is LiveboxBoxClient) {
+                                                withContext(Dispatchers.Main) { liveboxPwdDialog = true }
+                                                return@launch
+                                            }
+                                            if (box !is FreeboxBoxClient) {
+                                                withContext(Dispatchers.Main) {
+                                                    snackbar.showSnackbar("Cette box ne nécessite pas d'autorisation (ou n'est pas prise en charge).")
+                                                }
+                                                return@launch
+                                            }
                                             val token = box.requestAuthorization()
                                             if (token == null) {
                                                 withContext(Dispatchers.Main) {

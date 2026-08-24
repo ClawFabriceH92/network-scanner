@@ -23,6 +23,15 @@ détectés : box Freebox, PC, appareils Xiaomi/HP, Synology…).
 
 ## Changelog
 
+### v1.9.21 — MAC via box : Bbox (corrigé) + Livebox (sysbus)
+- **Bbox (Bouygues)** : client réécrit sur la vraie API publique
+  `GET /api/v1/hosts` (l'ancien code visait à tort l'API sysbus). Récupère
+  MAC/IP/nom/type de connexion **sans authentification**.
+- **Livebox (Orange)** : ajout de l'API **sysbus** moderne (Livebox 4+) —
+  `createContext` + `Devices:get` avec le mot de passe admin, saisi via un
+  dialogue (bouton « Autoriser » de la section box). Repli TR-064 pour les
+  Livebox 2/3. Récupère MAC/IP/nom/type de connexion.
+
 ### v1.9.20 — MAC via box : Freebox (corrigé) + SFR (nouveau)
 - **Box SFR / RED / Neufbox** : nouveau client via l'API locale publique
   `http://<box>/api/1.0/?method=lan.getHostsList` (Sagemcom NB4/5/6). Récupère
