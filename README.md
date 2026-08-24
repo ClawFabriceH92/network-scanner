@@ -23,6 +23,15 @@ détectés : box Freebox, PC, appareils Xiaomi/HP, Synology…).
 
 ## Changelog
 
+### v1.9.19 — navigateur DLNA + test Wake-on-LAN
+- **Navigateur DLNA** : menu ⋮ → « 🎬 Médias DLNA » découvre les serveurs
+  multimédia (UPnP ContentDirectory) et parcourt dossiers/fichiers ; un fichier
+  s'ouvre dans le lecteur externe (VLC…).
+- **Test Wake-on-LAN** : bouton « Tester le WoL » sur la fiche — envoie le magic
+  packet, attend, re-ping, puis mémorise « ✅ WoL confirmé ». Le WoL ne peut pas
+  se détecter passivement (appareil éteint = invisible) ; seul le test fait foi.
+  La fiche indique aussi « WoL possible (non testé) » quand la MAC est connue.
+
 ### v1.9.18 — enrichissement : Web, TLS, RTSP, UPnP-IGD, SNMP+, traceroute, latence
 - **Fingerprint web** : titre de la page (`<title>`) + empreinte MD5 du favicon.
 - **Certificat TLS** (443/8443/9443) : nom (CN), émetteur, expiration, alertes

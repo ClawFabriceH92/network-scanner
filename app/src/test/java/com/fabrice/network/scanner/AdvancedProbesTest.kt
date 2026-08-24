@@ -116,6 +116,41 @@ class AdvancedProbesTest {
         assertEquals("*", hop.ip)
     }
 
+    // ---- DLNA ----
+
+    @Test
+    fun dlna_parseControlUrl() {
+        val desc = """
+            <root><device><serviceList>
+              <service>
+                <serviceType>urn:schemas-upnp-org:service:ContentDirectory:1</serviceType>
+                <controlURL>/cd/control</controlURL>
+              </service>
+            </serviceList></device></root>
+        """.trimIndent()
+        assertEquals("/cd/control", DlnaBrowser.parseControlUrl(desc))
+    }
+
+    @Test
+    fun dlna_parseBrowseResult_containersAndItems() {
+        val didl = "&lt;DIDL-Lite&gt;" +
+            "&lt;container id=\"1\" parentID=\"0\"&gt;&lt;dc:title&gt;Musique&lt;/dc:title&gt;" +
+            "&lt;upnp:class&gt;object.container&lt;/upnp:class&gt;&lt;/container&gt;" +
+            "&lt;item id=\"1$5\" parentID=\"1\"&gt;&lt;dc:title&gt;Chanson&lt;/dc:title&gt;" +
+            "&lt;res protocolInfo=\"http-get\"&gt;http://10.0.0.2/song.mp3&lt;/res&gt;" +
+            "&lt;upnp:class&gt;object.item.audioItem&lt;/upnp:class&gt;&lt;/item&gt;" +
+            "&lt;/DIDL-Lite&gt;"
+        val soap = "<Result>$didl</Result>"
+        val entries = DlnaBrowser.parseBrowseResult(soap)
+        assertEquals(2, entries.size)
+        val container = entries.first { it.isContainer }
+        assertEquals("Musique", container.title)
+        assertEquals("1", container.id)
+        val item = entries.first { !it.isContainer }
+        assertEquals("Chanson", item.title)
+        assertEquals("http://10.0.0.2/song.mp3", item.url)
+    }
+
     // ---- Latence ----
 
     @Test

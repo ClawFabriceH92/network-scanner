@@ -137,6 +137,8 @@ import com.fabrice.network.scanner.TrustStore
 import com.fabrice.network.scanner.UpdateChecker
 import com.fabrice.network.scanner.VulnScanner
 import com.fabrice.network.scanner.WakeOnLan
+import com.fabrice.network.scanner.WoLDetector
+import com.fabrice.network.scanner.WolStore
 import com.fabrice.network.scanner.DefaultCredsChecker
 import com.fabrice.network.scanner.NewDeviceNotifier
 import com.fabrice.network.scanner.NmapSignatures
@@ -738,6 +740,13 @@ fun ScannerScreen() {
                                         screen = 6
                                     }
                                 )
+                                DropdownMenuItem(
+                                    text = { Text("🎬 Médias DLNA") },
+                                    onClick = {
+                                        menuExpanded = false
+                                        screen = 7
+                                    }
+                                )
                             }
                         }
                     }
@@ -845,6 +854,8 @@ fun ScannerScreen() {
                 )
             } else if (screen == 6) {
                 ProfilesScreen(onBack = { screen = 0 })
+            } else if (screen == 7) {
+                DlnaScreen(onBack = { screen = 0 })
             } else {
                 // Léger fondu à la bascule d'onglet.
                 Crossfade(
@@ -2188,6 +2199,12 @@ private fun DeviceDetailScreen(
         (device.ports + (deepPorts ?: emptyList())).distinct().sorted()
     }
 
+    // Wake-on-LAN : résultat mémorisé + test à la demande.
+    var wolTesting by remember(device.ip) { mutableStateOf(false) }
+    var wolWorks by remember(device.ip) {
+        mutableStateOf(WolStore(context).works(ScanHistory.identityKey(device)))
+    }
+
     // Bouton/geste retour système : sauvegarde le nom personnalisé saisi et
     // revient à la liste (comme le bouton « ← Retour »), au lieu de quitter l'app.
     BackHandler {
@@ -2279,6 +2296,32 @@ private fun DeviceDetailScreen(
                             snackbar.showSnackbar(msg)
                         }
                     }) { Text("Réveiller") }
+                    // Test WoL : envoie le magic packet, attend, re-ping → confirme
+                    // (ou non) le support Wake-on-LAN, puis mémorise le résultat.
+                    FilledTonalButton(
+                        enabled = !wolTesting,
+                        onClick = {
+                            wolTesting = true
+                            scope.launch {
+                                val subnet = NetworkScanner.detectSubnet()
+                                val broadcast = if (subnet != null)
+                                    NetworkScanner.broadcastAddress(subnet.first, subnet.second)
+                                else "255.255.255.255"
+                                val works = withMulticastLock(context) {
+                                    WoLDetector.testWol(device.mac, device.ip, broadcast, waitMs = 15_000) { ip ->
+                                        ping(ip).first
+                                    }
+                                }
+                                WolStore(context).setResult(ScanHistory.identityKey(device), works)
+                                wolWorks = works
+                                wolTesting = false
+                                snackbar.showSnackbar(
+                                    if (works) "✅ WoL confirmé : l'appareil a répondu"
+                                    else "WoL non confirmé (pas de réponse sous 15 s)"
+                                )
+                            }
+                        }
+                    ) { Text(if (wolTesting) "Test WoL…" else "Tester le WoL") }
                 }
                 if (hasWeb) {
                     FilledTonalButton(onClick = {
@@ -2352,6 +2395,11 @@ private fun DeviceDetailScreen(
                 device.latencyMs?.let { InfoRow("Latence", "$it ms", mono = true) }
                 device.ttl?.let { InfoRow("TTL", "$it", mono = true) }
                 InfoRow("Statut", if (device.alive) "En ligne" else "Vu récemment (ARP)")
+                when (wolWorks) {
+                    true -> InfoRow("Wake-on-LAN", "✅ confirmé")
+                    false -> InfoRow("Wake-on-LAN", "testé, sans réponse")
+                    null -> if (device.mac.isNotBlank()) InfoRow("Wake-on-LAN", "possible (non testé)")
+                }
                 if (device.isSelf) {
                     Spacer(Modifier.height(4.dp))
                     SelfBadge()
