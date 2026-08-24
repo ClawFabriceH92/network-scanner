@@ -8,56 +8,63 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Client Bbox Bouygues — API « sysbus » locale (http://192.168.1.254).
+ * Client Bbox Bouygues — API REST locale `http://<box>/api/v1/…`.
  *
- * ⚠️ L'API sysbus n'est PAS documentée officiellement : les endpoints listés
- * ci-dessous viennent de la communauté (forums LaFibre, scripts domotique).
- * Chaque appel est protégé par runCatching et renvoie null en cas d'échec.
- * Les champs parsés sont défensifs (plusieurs clés possibles) et DOIVENT être
- * confirmés sur une vraie Bbox avant de prétendre que ça marche.
+ * `GET /api/v1/hosts` est accessible en lecture sur le réseau local SANS
+ * authentification et renvoie la liste des équipements en JSON :
  *
- * Auth : la sysbus peut exiger un token (POST /sysbus/ avec le password de
- * l'interface d'admin). Non géré ici : sans token, `fetchDevices()` renvoie
- * null (l'UI affiche « non disponible »).
+ *   [ { "hosts": { "list": [ { "hostname":"…", "macaddress":"…",
+ *        "ipaddress":"…", "active":1, "link":"Wifi 5" }, … ] } } ]
+ *
+ * C'est ce qui permet de récupérer les MAC de tout le réseau sur une Bbox.
  */
-class BboxBoxClient : BoxClient {
+class BboxBoxClient(private val gateway: String = GATEWAY) : BoxClient {
 
     companion object {
         /** Passerelle par défaut des Bbox (détection dans BoxManager). */
         const val GATEWAY = "192.168.1.254"
 
         /**
-         * Parse une réponse JSON sysbus (factice ou réelle) → équipements.
-         * Format défensif : cherche `result` puis un tableau d'équipements sous
-         * plusieurs clés possibles (`devices`, `hosts`, `results`), et lit les
-         * champs sous plusieurs noms (camelCase ou PascalCase). ⚠️ À confirmer
-         * sur box réelle.
+         * Vrai si l'hôte répond à l'API Bbox (signature JSON `hosts`/`list`).
+         * Distingue une Bbox d'une autre box sur 192.168.1.254. Thread IO.
+         */
+        fun respondsToApi(gateway: String, timeoutMs: Int = 1_500): Boolean {
+            val json = httpGet("http://$gateway/api/v1/hosts", timeoutMs) ?: return false
+            return json.contains("\"hosts\"") || json.contains("macaddress")
+        }
+
+        /**
+         * Parse la réponse `/api/v1/hosts` → équipements. Robuste à la forme
+         * (tableau `[{"hosts":{"list":[…]}}]` ou objet `{"hosts":{"list":[…]}}`).
+         * Fonction pure — testable.
          */
         fun parseDevices(json: String): List<BoxClient.BoxDevice> {
-            val root = runCatching { JSONObject(json) }.getOrNull() ?: return emptyList()
-            val result = root.optJSONObject("result") ?: root
-            val array = listOf("devices", "hosts", "results", "list")
-                .firstNotNullOfOrNull { result.optJSONArray(it) }
-                ?: return emptyList()
+            val hostsObj = extractHostsObject(json) ?: return emptyList()
+            val list = hostsObj.optJSONArray("list") ?: return emptyList()
             val out = mutableListOf<BoxClient.BoxDevice>()
-            for (i in 0 until array.length()) {
-                val e = array.optJSONObject(i) ?: continue
-                val mac = e.optString("MACAddress", e.optString("mac", e.optString("MAC", "")))
-                val ip = e.optString("IPAddress", e.optString("ip", ""))
-                val name = e.optString("Name", e.optString("name", e.optString("HostName", e.optString("hostname", ""))))
-                val active = e.optBoolean("Active", e.optBoolean("active", true))
-                val rawType = e.optString("ConnectionType", e.optString("connectionType", e.optString("InterfaceType", ""))).lowercase()
+            for (i in 0 until list.length()) {
+                val e = list.optJSONObject(i) ?: continue
+                val mac = e.optString("macaddress", e.optString("macAddress", "")).trim()
+                if (mac.isBlank()) continue
+                val link = e.optString("link", e.optString("devicetype", "")).lowercase()
                 val connectionType = when {
-                    rawType.contains("eth") || rawType.contains("wired") || rawType.contains("cable") -> "Ethernet"
-                    rawType.contains("wifi") || rawType.contains("wireless") || rawType.contains("wlan") || rawType.contains("802.11") -> "WiFi"
+                    link.contains("wifi") || link.contains("wireless") || link.contains("wl") -> "WiFi"
+                    link.contains("eth") || link.contains("cable") || link.contains("wired") -> "Ethernet"
                     else -> null
+                }
+                // active : 1/0 (Int) ou true/false selon firmware.
+                val active = when (val a = e.opt("active")) {
+                    is Int -> a == 1
+                    is Boolean -> a
+                    is String -> a == "1" || a.equals("true", true)
+                    else -> true
                 }
                 out.add(
                     BoxClient.BoxDevice(
-                        name = name,
+                        name = e.optString("hostname", e.optString("name", "")),
                         mac = mac,
-                        ip = ip,
-                        hostType = "",
+                        ip = e.optString("ipaddress", e.optString("ip", "")),
+                        hostType = e.optString("devicetype", ""),
                         active = active,
                         reachable = active,
                         lastActivity = "",
@@ -68,75 +75,60 @@ class BboxBoxClient : BoxClient {
             return out
         }
 
-        /**
-         * Parse une réponse JSON sysbus « connexion » → BoxConnection (défensif).
-         * ⚠️ L'endpoint de connexion Bbox n'est pas documenté de façon fiable —
-         * ce parseur sert surtout à tester la structure, il n'est pas garanti
-         * contre une vraie box.
-         */
-        fun parseConnection(json: String): BoxConnection? {
-            val root = runCatching { JSONObject(json) }.getOrNull() ?: return null
-            val r = root.optJSONObject("result") ?: root
-            val ip = r.optString("IPAddress", r.optString("ip", r.optString("IPv4Address", "")))
-            val type = r.optString("ConnectionType", r.optString("type", ""))
-            return BoxConnection(
-                publicIp = ip,
-                connectionType = type
-            )
+        /** Trouve l'objet `hosts` quelle que soit l'enveloppe (array/objet). */
+        private fun extractHostsObject(json: String): JSONObject? {
+            val trimmed = json.trimStart()
+            val container: JSONObject? = if (trimmed.startsWith("[")) {
+                runCatching { JSONArray(json).optJSONObject(0) }.getOrNull()
+            } else {
+                runCatching { JSONObject(json) }.getOrNull()
+            }
+            return container?.optJSONObject("hosts")
+        }
+
+        private fun httpGet(url: String, timeoutMs: Int): String? {
+            val conn = URL(url).openConnection() as HttpURLConnection
+            return try {
+                conn.connectTimeout = timeoutMs
+                conn.readTimeout = timeoutMs
+                conn.setRequestProperty("User-Agent", "NetworkScanner/1.0")
+                if (conn.responseCode != 200) return null
+                conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            } catch (e: Exception) {
+                null
+            } finally {
+                runCatching { conn.disconnect() }
+            }
         }
     }
 
     override val name = "Bbox"
-    override val baseUrl = "http://192.168.1.254"
+    override val baseUrl = "http://$gateway/api/v1"
 
-    /** GET simple sur la sysbus, corps de réponse en String (null si échec). */
-    private fun get(path: String, timeoutMs: Int = 5_000): String? {
-        return try {
-            val conn = URL(baseUrl + path).openConnection() as HttpURLConnection
-            conn.requestMethod = "GET"
-            conn.connectTimeout = timeoutMs
-            conn.readTimeout = timeoutMs
-            conn.setRequestProperty("User-Agent", "NetworkScanner/1.0")
-            if (conn.responseCode in 200..299) {
-                val text = conn.inputStream.bufferedReader().use { it.readText() }
-                conn.disconnect()
-                text
-            } else {
-                conn.disconnect()
-                null
-            }
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    override fun isAvailable(): Boolean {
-        // La sysbus répond sur /sysbus/ si la Bbox est joignable.
-        return get("/sysbus/") != null
-    }
+    override fun isAvailable(): Boolean = gateway.isNotBlank()
 
     override suspend fun fetchDevices(): List<BoxClient.BoxDevice>? =
         withContext(Dispatchers.IO) {
-            // Endpoints communauté à confirmer : Devices:get est le plus souvent
-            // cité ; on tente plusieurs formes et on parse de façon défensive.
-            val candidates = listOf(
-                "/sysbus/Devices:get",
-                "/sysbus/Hosts:getHosts",
-                "/sysbus/NMC:getLANDevices"
-            )
-            for (path in candidates) {
-                val text = get(path) ?: continue
-                val devices = parseDevices(text)
-                if (devices.isNotEmpty()) return@withContext devices
-            }
-            null
+            val json = httpGet("$baseUrl/hosts", 5_000) ?: return@withContext null
+            val devices = parseDevices(json)
+            devices.ifEmpty { if (json.contains("\"hosts\"")) emptyList() else null }
         }
 
     override suspend fun fetchConnection(): BoxConnection? =
         withContext(Dispatchers.IO) {
-            // ⚠️ Pas d'endpoint connexion fiable documenté côté Bbox — on tente
-            // une forme, et on renvoie null sinon (honnête : « non disponible »).
-            val text = get("/sysbus/NeMo:Intf:getMIBs") ?: return@withContext null
-            parseConnection(text)
+            val json = httpGet("$baseUrl/wan/ip", 4_000) ?: return@withContext null
+            runCatching {
+                val wan = extractFirst(json, "wan") ?: return@runCatching null
+                val ip = wan.optJSONObject("ip")?.optString("address", "") ?: ""
+                BoxConnection(publicIp = ip, connectionType = "")
+            }.getOrNull()
         }
+
+    private fun extractFirst(json: String, key: String): JSONObject? {
+        val trimmed = json.trimStart()
+        val container = if (trimmed.startsWith("[")) {
+            runCatching { JSONArray(json).optJSONObject(0) }.getOrNull()
+        } else runCatching { JSONObject(json) }.getOrNull()
+        return container?.optJSONObject(key)
+    }
 }

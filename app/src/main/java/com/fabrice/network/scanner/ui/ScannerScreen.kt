@@ -118,6 +118,7 @@ import com.fabrice.network.scanner.FreeboxBoxClient
 import com.fabrice.network.scanner.GatewayWatcher
 import com.fabrice.network.scanner.HistoryStore
 import com.fabrice.network.scanner.LatencyHistoryStore
+import com.fabrice.network.scanner.LiveboxBoxClient
 import com.fabrice.network.scanner.NetworkScanner
 import com.fabrice.network.scanner.NetworkInfoProvider
 import com.fabrice.network.scanner.OuiDatabase
@@ -137,6 +138,8 @@ import com.fabrice.network.scanner.TrustStore
 import com.fabrice.network.scanner.UpdateChecker
 import com.fabrice.network.scanner.VulnScanner
 import com.fabrice.network.scanner.WakeOnLan
+import com.fabrice.network.scanner.WoLDetector
+import com.fabrice.network.scanner.WolStore
 import com.fabrice.network.scanner.DefaultCredsChecker
 import com.fabrice.network.scanner.NewDeviceNotifier
 import com.fabrice.network.scanner.NmapSignatures
@@ -252,6 +255,9 @@ fun ScannerScreen() {
     // le check silencieux détecte une nouvelle version).
     var showUpdateDialog by remember { mutableStateOf(false) }
     var updateDialogShown by remember { mutableStateOf(false) }
+    // Dialogue de mot de passe Livebox (API sysbus, admin).
+    var liveboxPwdDialog by remember { mutableStateOf(false) }
+    var liveboxPwdInput by remember { mutableStateOf("") }
 
     // --- Ergonomie : recherche / tri / filtres / regroupement ---
     var searchQuery by remember { mutableStateOf("") }
@@ -624,6 +630,49 @@ fun ScannerScreen() {
     // lieu de quitter l'application.
     BackHandler(enabled = screen != 0) { screen = 0 }
 
+    // Dialogue mot de passe Livebox (API sysbus admin).
+    if (liveboxPwdDialog) {
+        AlertDialog(
+            onDismissRequest = { liveboxPwdDialog = false },
+            title = { Text("Mot de passe Livebox") },
+            text = {
+                Column {
+                    Text(
+                        "Saisis le mot de passe d'administration de la Livebox " +
+                            "(interface http://livebox, identifiant « admin »).",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = liveboxPwdInput,
+                        onValueChange = { liveboxPwdInput = it },
+                        singleLine = true,
+                        label = { Text("Mot de passe admin") }
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val pwd = liveboxPwdInput
+                    liveboxPwdDialog = false
+                    liveboxPwdInput = ""
+                    if (pwd.isNotBlank()) {
+                        scope.launch(Dispatchers.IO) {
+                            LiveboxBoxClient(context).setPassword(pwd)
+                            withContext(Dispatchers.Main) {
+                                snackbar.showSnackbar("Mot de passe enregistré — nouveau scan…")
+                                runScan()
+                            }
+                        }
+                    }
+                }) { Text("Valider") }
+            },
+            dismissButton = {
+                TextButton(onClick = { liveboxPwdDialog = false; liveboxPwdInput = "" }) { Text("Annuler") }
+            }
+        )
+    }
+
     // Pop-up « mise à jour disponible » (détectée au lancement).
     val pendingUpdate = updateInfo
     if (showUpdateDialog && pendingUpdate != null) {
@@ -738,6 +787,13 @@ fun ScannerScreen() {
                                         screen = 6
                                     }
                                 )
+                                DropdownMenuItem(
+                                    text = { Text("🎬 Médias DLNA") },
+                                    onClick = {
+                                        menuExpanded = false
+                                        screen = 7
+                                    }
+                                )
                             }
                         }
                     }
@@ -845,6 +901,8 @@ fun ScannerScreen() {
                 )
             } else if (screen == 6) {
                 ProfilesScreen(onBack = { screen = 0 })
+            } else if (screen == 7) {
+                DlnaScreen(onBack = { screen = 0 })
             } else {
                 // Léger fondu à la bascule d'onglet.
                 Crossfade(
@@ -952,12 +1010,49 @@ fun ScannerScreen() {
                                         // NetworkOnMainThreadException.
                                         scope.launch(Dispatchers.IO) {
                                             val box = BoxManager.detect(context)
-                                            if (box is FreeboxBoxClient) {
-                                                box.requestAuthorization()
+                                            // Livebox : nécessite le mot de passe admin (API sysbus)
+                                            // → dialogue de saisie. Bbox/SFR : API publique, pas d'auth.
+                                            if (box is LiveboxBoxClient) {
+                                                withContext(Dispatchers.Main) { liveboxPwdDialog = true }
+                                                return@launch
+                                            }
+                                            if (box !is FreeboxBoxClient) {
                                                 withContext(Dispatchers.Main) {
-                                                    snackbar.showSnackbar(
-                                                        "Autorisation envoyée — valide-la sur la box, puis rescanne."
-                                                    )
+                                                    snackbar.showSnackbar("Cette box ne nécessite pas d'autorisation (ou n'est pas prise en charge).")
+                                                }
+                                                return@launch
+                                            }
+                                            val token = box.requestAuthorization()
+                                            if (token == null) {
+                                                withContext(Dispatchers.Main) {
+                                                    snackbar.showSnackbar("Impossible de contacter la Freebox.")
+                                                }
+                                                return@launch
+                                            }
+                                            withContext(Dispatchers.Main) {
+                                                snackbar.showSnackbar(
+                                                    "👉 Valide la demande « NetworkScanner » sur l'écran de la Freebox…"
+                                                )
+                                            }
+                                            // Poll du statut jusqu'à ~90 s : SEUL ce poll
+                                            // promeut le token « pending » en token valide
+                                            // (sinon la box n'est jamais réellement autorisée).
+                                            var status = "pending"
+                                            val deadline = System.currentTimeMillis() + 90_000
+                                            while (System.currentTimeMillis() < deadline) {
+                                                kotlinx.coroutines.delay(2_000)
+                                                status = box.authorizationStatus() ?: "unknown"
+                                                if (status != "pending") break
+                                            }
+                                            withContext(Dispatchers.Main) {
+                                                when (status) {
+                                                    "granted" -> {
+                                                        snackbar.showSnackbar("✅ Freebox autorisée — nouveau scan…")
+                                                        runScan()
+                                                    }
+                                                    "denied" -> snackbar.showSnackbar("❌ Autorisation refusée sur la box.")
+                                                    "timeout" -> snackbar.showSnackbar("⏱️ Demande expirée — réessaie.")
+                                                    else -> snackbar.showSnackbar("Autorisation non confirmée — réessaie.")
                                                 }
                                             }
                                         }
@@ -2188,6 +2283,12 @@ private fun DeviceDetailScreen(
         (device.ports + (deepPorts ?: emptyList())).distinct().sorted()
     }
 
+    // Wake-on-LAN : résultat mémorisé + test à la demande.
+    var wolTesting by remember(device.ip) { mutableStateOf(false) }
+    var wolWorks by remember(device.ip) {
+        mutableStateOf(WolStore(context).works(ScanHistory.identityKey(device)))
+    }
+
     // Bouton/geste retour système : sauvegarde le nom personnalisé saisi et
     // revient à la liste (comme le bouton « ← Retour »), au lieu de quitter l'app.
     BackHandler {
@@ -2279,6 +2380,37 @@ private fun DeviceDetailScreen(
                             snackbar.showSnackbar(msg)
                         }
                     }) { Text("Réveiller") }
+                    // Test WoL : envoie le magic packet, attend, re-ping → confirme
+                    // (ou non) le support Wake-on-LAN, puis mémorise le résultat.
+                    FilledTonalButton(
+                        enabled = !wolTesting,
+                        onClick = {
+                            wolTesting = true
+                            scope.launch {
+                                val subnet = NetworkScanner.detectSubnet()
+                                val broadcast = if (subnet != null)
+                                    NetworkScanner.broadcastAddress(subnet.first, subnet.second)
+                                else "255.255.255.255"
+                                // Lock multicast UNIQUEMENT autour de l'envoi (non
+                                // suspendu) ; l'attente + re-ping se font ensuite
+                                // dans le corps coroutine.
+                                val sent = withMulticastLock(context) {
+                                    WakeOnLan.send(device.mac, broadcast)
+                                }
+                                val works = if (!sent) false else {
+                                    kotlinx.coroutines.delay(15_000)
+                                    withContext(Dispatchers.IO) { ping(device.ip).first }
+                                }
+                                WolStore(context).setResult(ScanHistory.identityKey(device), works)
+                                wolWorks = works
+                                wolTesting = false
+                                snackbar.showSnackbar(
+                                    if (works) "✅ WoL confirmé : l'appareil a répondu"
+                                    else "WoL non confirmé (pas de réponse sous 15 s)"
+                                )
+                            }
+                        }
+                    ) { Text(if (wolTesting) "Test WoL…" else "Tester le WoL") }
                 }
                 if (hasWeb) {
                     FilledTonalButton(onClick = {
@@ -2352,6 +2484,11 @@ private fun DeviceDetailScreen(
                 device.latencyMs?.let { InfoRow("Latence", "$it ms", mono = true) }
                 device.ttl?.let { InfoRow("TTL", "$it", mono = true) }
                 InfoRow("Statut", if (device.alive) "En ligne" else "Vu récemment (ARP)")
+                when (wolWorks) {
+                    true -> InfoRow("Wake-on-LAN", "✅ confirmé")
+                    false -> InfoRow("Wake-on-LAN", "testé, sans réponse")
+                    null -> if (device.mac.isNotBlank()) InfoRow("Wake-on-LAN", "possible (non testé)")
+                }
                 if (device.isSelf) {
                     Spacer(Modifier.height(4.dp))
                     SelfBadge()

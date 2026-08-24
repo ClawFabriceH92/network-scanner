@@ -116,6 +116,102 @@ class AdvancedProbesTest {
         assertEquals("*", hop.ip)
     }
 
+    // ---- DLNA ----
+
+    @Test
+    fun dlna_parseControlUrl() {
+        val desc = """
+            <root><device><serviceList>
+              <service>
+                <serviceType>urn:schemas-upnp-org:service:ContentDirectory:1</serviceType>
+                <controlURL>/cd/control</controlURL>
+              </service>
+            </serviceList></device></root>
+        """.trimIndent()
+        assertEquals("/cd/control", DlnaBrowser.parseControlUrl(desc))
+    }
+
+    @Test
+    fun dlna_parseBrowseResult_containersAndItems() {
+        val didl = "&lt;DIDL-Lite&gt;" +
+            "&lt;container id=\"1\" parentID=\"0\"&gt;&lt;dc:title&gt;Musique&lt;/dc:title&gt;" +
+            "&lt;upnp:class&gt;object.container&lt;/upnp:class&gt;&lt;/container&gt;" +
+            "&lt;item id=\"1$5\" parentID=\"1\"&gt;&lt;dc:title&gt;Chanson&lt;/dc:title&gt;" +
+            "&lt;res protocolInfo=\"http-get\"&gt;http://10.0.0.2/song.mp3&lt;/res&gt;" +
+            "&lt;upnp:class&gt;object.item.audioItem&lt;/upnp:class&gt;&lt;/item&gt;" +
+            "&lt;/DIDL-Lite&gt;"
+        val soap = "<Result>$didl</Result>"
+        val entries = DlnaBrowser.parseBrowseResult(soap)
+        assertEquals(2, entries.size)
+        val container = entries.first { it.isContainer }
+        assertEquals("Musique", container.title)
+        assertEquals("1", container.id)
+        val item = entries.first { !it.isContainer }
+        assertEquals("Chanson", item.title)
+        assertEquals("http://10.0.0.2/song.mp3", item.url)
+    }
+
+    // ---- Box SFR ----
+
+    @Test
+    fun sfr_parseHosts_extractsDevices() {
+        val xml = "<rsp stat=\"ok\">" +
+            "<host name=\"PC-Bureau\" ip=\"192.168.1.10\" mac=\"e0:70:ea:fb:1c:eb\" iface=\"lan1\" status=\"online\"/>" +
+            "<host name=\"Tel\" ip=\"192.168.1.20\" mac=\"aa:bb:cc:dd:ee:ff\" iface=\"wlan0\" status=\"offline\"/>" +
+            "</rsp>"
+        val hosts = SfrBoxClient.parseHosts(xml)
+        assertEquals(2, hosts.size)
+        assertEquals("e0:70:ea:fb:1c:eb", hosts[0].mac)
+        assertEquals("192.168.1.10", hosts[0].ip)
+        assertEquals("Ethernet", hosts[0].connectionType)
+        assertTrue(hosts[0].active)
+        assertEquals("WiFi", hosts[1].connectionType)
+    }
+
+    @Test
+    fun sfr_parseHosts_ignoresHostsWithoutMac() {
+        assertEquals(0, SfrBoxClient.parseHosts("<rsp stat=\"ok\"><host name=\"x\" ip=\"1.2.3.4\"/></rsp>").size)
+    }
+
+    // ---- Box Bbox ----
+
+    @Test
+    fun bbox_parseDevices_arrayEnvelope() {
+        val json = """
+            [ { "hosts": { "list": [
+              { "hostname":"PC", "macaddress":"e0:70:ea:fb:1c:eb", "ipaddress":"192.168.1.10", "active":1, "link":"Ethernet" },
+              { "hostname":"Tel", "macaddress":"aa:bb:cc:dd:ee:ff", "ipaddress":"192.168.1.20", "active":0, "link":"Wifi 5" }
+            ] } } ]
+        """.trimIndent()
+        val hosts = BboxBoxClient.parseDevices(json)
+        assertEquals(2, hosts.size)
+        assertEquals("e0:70:ea:fb:1c:eb", hosts[0].mac)
+        assertEquals("Ethernet", hosts[0].connectionType)
+        assertTrue(hosts[0].active)
+        assertEquals("WiFi", hosts[1].connectionType)
+    }
+
+    // ---- Box Livebox (sysbus) ----
+
+    @Test
+    fun livebox_parseContextId() {
+        assertEquals("abc123", LiveboxBoxClient.parseContextId("{\"status\":0,\"data\":{\"contextID\":\"abc123\"}}"))
+        assertNull(LiveboxBoxClient.parseContextId("{\"status\":1}"))
+    }
+
+    @Test
+    fun livebox_parseSysbusDevices() {
+        val json = "{\"status\":[" +
+            "{\"Name\":\"PC\",\"PhysAddress\":\"e0:70:ea:fb:1c:eb\",\"IPAddress\":\"192.168.1.10\",\"Active\":true,\"Layer2Interface\":\"eth0\"}," +
+            "{\"Name\":\"Tel\",\"PhysAddress\":\"aa:bb:cc:dd:ee:ff\",\"IPAddress\":\"192.168.1.20\",\"Active\":false,\"Layer2Interface\":\"wl0\"}" +
+            "]}"
+        val hosts = LiveboxBoxClient.parseSysbusDevices(json)
+        assertEquals(2, hosts.size)
+        assertEquals("e0:70:ea:fb:1c:eb", hosts[0].mac)
+        assertEquals("Ethernet", hosts[0].connectionType)
+        assertEquals("WiFi", hosts[1].connectionType)
+    }
+
     // ---- Latence ----
 
     @Test

@@ -23,6 +23,39 @@ détectés : box Freebox, PC, appareils Xiaomi/HP, Synology…).
 
 ## Changelog
 
+### v1.9.21 — MAC via box : Bbox (corrigé) + Livebox (sysbus)
+- **Bbox (Bouygues)** : client réécrit sur la vraie API publique
+  `GET /api/v1/hosts` (l'ancien code visait à tort l'API sysbus). Récupère
+  MAC/IP/nom/type de connexion **sans authentification**.
+- **Livebox (Orange)** : ajout de l'API **sysbus** moderne (Livebox 4+) —
+  `createContext` + `Devices:get` avec le mot de passe admin, saisi via un
+  dialogue (bouton « Autoriser » de la section box). Repli TR-064 pour les
+  Livebox 2/3. Récupère MAC/IP/nom/type de connexion.
+
+### v1.9.20 — MAC via box : Freebox (corrigé) + SFR (nouveau)
+- **Box SFR / RED / Neufbox** : nouveau client via l'API locale publique
+  `http://<box>/api/1.0/?method=lan.getHostsList` (Sagemcom NB4/5/6). Récupère
+  MAC + IP + nom + type de connexion de tout le réseau, **sans autorisation**.
+  Détection active (sonde de l'API) pour distinguer SFR d'une Livebox sur
+  192.168.1.1.
+- **Autorisation Freebox réparée** : l'app poll désormais le statut après la
+  demande — c'est cette étape qui valide réellement le jeton. Sans elle, la box
+  n'était jamais autorisée, donc aucune MAC n'était récupérée. Après validation
+  sur l'écran de la box, un nouveau scan est lancé automatiquement.
+- **Version d'API Freebox dynamique** : découverte via `/api_version` au lieu de
+  « v9 » figé (l'API échouait si la box était en v8/v10/v13…).
+- Rappel : sur Android 10+ la table ARP système est vide ; l'API de la box est
+  la source fiable des MAC de tout le réseau.
+
+### v1.9.19 — navigateur DLNA + test Wake-on-LAN
+- **Navigateur DLNA** : menu ⋮ → « 🎬 Médias DLNA » découvre les serveurs
+  multimédia (UPnP ContentDirectory) et parcourt dossiers/fichiers ; un fichier
+  s'ouvre dans le lecteur externe (VLC…).
+- **Test Wake-on-LAN** : bouton « Tester le WoL » sur la fiche — envoie le magic
+  packet, attend, re-ping, puis mémorise « ✅ WoL confirmé ». Le WoL ne peut pas
+  se détecter passivement (appareil éteint = invisible) ; seul le test fait foi.
+  La fiche indique aussi « WoL possible (non testé) » quand la MAC est connue.
+
 ### v1.9.18 — enrichissement : Web, TLS, RTSP, UPnP-IGD, SNMP+, traceroute, latence
 - **Fingerprint web** : titre de la page (`<title>`) + empreinte MD5 du favicon.
 - **Certificat TLS** (443/8443/9443) : nom (CN), émetteur, expiration, alertes
