@@ -418,21 +418,25 @@ fun ScannerScreen() {
                 boxDevices = emptyList()
                 boxStatus = null
             }
-            devices = result
+            // Fusionne les MAC connues de la box (table DHCP/ARP) dans les fiches
+            // par IP : sur Android 10+, /proc/net/arp est vidé, donc la box est la
+            // source fiable des MAC de tout le réseau. Redonne aussi le fabricant.
+            val merged = mergeBoxMacs(result, boxDevices, oui)
+            devices = merged
             // Alerte push si une credential par défaut a été trouvée (même canal)
-            result.filter { it.defaultCred != null }.take(3).forEach { d ->
+            merged.filter { it.defaultCred != null }.take(3).forEach { d ->
                 NewDeviceNotifier.notifyDefaultCred(context, d)
             }
             withContext(Dispatchers.IO) {
-                ScanPersistence.save(context, result)
+                ScanPersistence.save(context, merged)
                 // Historise les stats des imprimantes trouvées + met à jour le
                 // profil « lieu de connexion » du réseau courant (instantané).
                 val nowMs = System.currentTimeMillis()
                 val statsStore = PrinterStatsStore(context)
-                result.forEach { runCatching { statsStore.record(it, nowMs) } }
+                merged.forEach { runCatching { statsStore.record(it, nowMs) } }
                 runCatching {
                     val net = NetworkInfoProvider.read(context)
-                    ProfileStore(context).upsertCurrent(net, result, deviceStore, nowMs)
+                    ProfileStore(context).upsertCurrent(net, merged, deviceStore, nowMs)
                 }
             }
             // Blocages programmés : applique les fenêtres dues via l'API box
@@ -2763,6 +2767,33 @@ private fun VulnSection(v: VulnScanner.DeviceVulns) {
 
 private fun sevLabel(cve: CveEntry): String =
     "${cve.severity}" + (cve.cvss?.let { " (${it})" } ?: "")
+
+/**
+ * Complète les appareils dont la MAC est absente à partir de la table de la box
+ * (baux DHCP), par correspondance d'IP. Sur Android 10+, la table ARP système
+ * est inaccessible : la box est la source fiable des MAC de tout le réseau. La
+ * MAC trouvée sert aussi à retrouver le fabricant via la base OUI.
+ */
+private fun mergeBoxMacs(
+    devices: List<Device>,
+    boxDevices: List<BoxClient.BoxDevice>,
+    oui: Map<String, String>
+): List<Device> {
+    if (boxDevices.isEmpty()) return devices
+    val byIp = boxDevices.filter { it.ip.isNotBlank() && it.mac.isNotBlank() }
+        .associateBy { it.ip }
+    return devices.map { d ->
+        if (d.mac.isNotBlank()) return@map d
+        val b = byIp[d.ip] ?: return@map d
+        val vendor = d.vendor.ifBlank { NetworkScanner.vendorFor(b.mac, oui) }
+        d.copy(
+            mac = b.mac,
+            vendor = vendor,
+            hostname = d.hostname.ifBlank { b.name },
+            connectionType = d.connectionType ?: b.connectionType
+        )
+    }
+}
 
 @Composable
 private fun sevColor(sev: String): Color {

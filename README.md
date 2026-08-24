@@ -23,6 +23,14 @@ détectés : box Freebox, PC, appareils Xiaomi/HP, Synology…).
 
 ## Changelog
 
+### v1.9.16 — adresses MAC (box + SNMP)
+- **MAC via la box** : sur Android 10+ la table ARP système est vidée, donc l'app
+  ne pouvait pas lire les MAC des autres appareils. Les MAC connues de la box
+  (baux DHCP Freebox/Livebox/Bbox) sont désormais **fusionnées par IP** dans les
+  fiches — MAC + fabricant pour la plupart des appareils du réseau.
+- **MAC via SNMP** : pour les appareils exposant SNMP (imprimante, NAS, routeurs
+  pro…), la MAC est lue via `ifPhysAddress` quand elle manque.
+
 ### v1.9.15 — compteurs imprimante : scans & copies
 - **Nombre de numérisations et de copies** en plus des impressions, via la page
   d'usage EWS HP `/DevMgmt/ProductUsageDyn.xml` (impressions / scans ADF+vitre /

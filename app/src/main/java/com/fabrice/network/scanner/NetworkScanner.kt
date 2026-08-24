@@ -383,6 +383,14 @@ object NetworkScanner {
                 if (hostname.isBlank() && nbns.name.isNotBlank()) hostname = nbns.name
             }
 
+            // MAC via SNMP (ifPhysAddress) quand elle manque encore : sur Android
+            // 10+ la table ARP système est vide, mais un appareil qui expose SNMP
+            // (imprimante, NAS, routeur pro…) publie sa MAC. Seulement si le port
+            // 161 est ouvert, jamais bloquant, reporté en mode économie.
+            if (mac.isBlank() && responded && 161 in ports && !scanEconomy) {
+                mac = runCatching { snmpMac(host) }.getOrNull().orEmpty()
+            }
+
             // MAC Docker (02:42) → fabricant « Docker » : détecté AVANT le test
             // « aléatoire » (le bit localement administré est aussi à 1 sur ces
             // MAC) et jamais résolu en ligne (préfixe absent des bases OUI).
@@ -614,4 +622,30 @@ object NetworkScanner {
     /** Premier élément non vide/non blanc d'une liste de valeurs, ou null. */
     private fun firstNonBlank(vararg values: String?): String? =
         values.firstOrNull { !it.isNullOrBlank() }?.trim()
+
+    /**
+     * MAC via SNMP (OID ifPhysAddress `1.3.6.1.2.1.2.2.1.6.<ifIndex>`). Interroge
+     * les premiers index d'interface et retourne la première MAC valide. « » si
+     * l'agent ne répond pas ou n'expose pas de MAC. À appeler depuis un thread IO.
+     */
+    private fun snmpMac(host: String): String {
+        val oids = listOf(
+            "1.3.6.1.2.1.2.2.1.6.1",
+            "1.3.6.1.2.1.2.2.1.6.2",
+            "1.3.6.1.2.1.2.2.1.6.3"
+        )
+        val vbs = SnmpScanner.getOids(host, oids, 1_500)
+        for (oid in oids) {
+            val raw = vbs[oid]?.raw ?: continue
+            formatMac(raw)?.let { return it }
+        }
+        return ""
+    }
+
+    /** Formate 6 octets bruts en MAC « aa:bb:cc:dd:ee:ff » ; null si invalide/nulle. */
+    fun formatMac(raw: ByteArray): String? {
+        if (raw.size != 6) return null
+        if (raw.all { it.toInt() == 0 }) return null
+        return raw.joinToString(":") { "%02x".format(it.toInt() and 0xFF) }
+    }
 }

@@ -57,6 +57,20 @@ class NetworkScannerTest {
     }
 
     @Test
+    fun formatMac_formatsSixBytes() {
+        val raw = byteArrayOf(
+            0xE0.toByte(), 0x70, 0xEA.toByte(), 0xFB.toByte(), 0x1C, 0xEB.toByte()
+        )
+        assertEquals("e0:70:ea:fb:1c:eb", NetworkScanner.formatMac(raw))
+    }
+
+    @Test
+    fun formatMac_rejectsInvalid() {
+        assertNull(NetworkScanner.formatMac(byteArrayOf(1, 2, 3)))          // mauvaise taille
+        assertNull(NetworkScanner.formatMac(ByteArray(6)))                  // tout à zéro
+    }
+
+    @Test
     fun vendorFor_normalizesMac() {
         val oui = mapOf("f4cae5" to "FREEBOX SAS")
         assertEquals("FREEBOX SAS", NetworkScanner.vendorFor("f4:ca:e5:4d:d3:e9", oui))
