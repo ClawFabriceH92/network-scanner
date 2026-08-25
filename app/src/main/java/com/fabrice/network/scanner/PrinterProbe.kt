@@ -102,10 +102,20 @@ object PrinterProbe {
         )
     }
 
-    /** Compteur de pages total via SNMP (prtMarkerLifeCount), ou null. */
+    /** Colonne SNMP prtMarkerLifeCount (indexée par périphérique.marqueur). */
+    private const val OID_MARKER_LIFE_COLUMN = "1.3.6.1.2.1.43.10.2.1.4"
+
+    /**
+     * Compteur de pages total via SNMP. GET direct sur l'index usuel (.1.1),
+     * puis, si vide, WALK de toute la colonne prtMarkerLifeCount en prenant la
+     * plus grande valeur — robuste aux index variables selon les modèles.
+     */
     private fun snmpPageCount(ip: String, timeoutMs: Int): Long? {
-        val vbs = SnmpScanner.getOids(ip, listOf(OID_MARKER_LIFE_COUNT), timeoutMs)
-        return vbs[OID_MARKER_LIFE_COUNT]?.longOrNull()
+        val direct = SnmpScanner.getOids(ip, listOf(OID_MARKER_LIFE_COUNT), timeoutMs)[OID_MARKER_LIFE_COUNT]
+            ?.longOrNull()
+        if (direct != null && direct > 0) return direct
+        val rows = SnmpScanner.walk(ip, OID_MARKER_LIFE_COLUMN, timeoutMs)
+        return rows.mapNotNull { it.longOrNull() }.filter { it >= 0 }.maxOrNull()
     }
 
     // ---------------------------------------------- Compteurs d'usage (EWS HP)

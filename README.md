@@ -23,6 +23,11 @@ détectés : box Freebox, PC, appareils Xiaomi/HP, Synology…).
 
 ## Changelog
 
+### v1.9.24 — compteur imprimante : lecture SNMP plus robuste
+- **Compteur de pages SNMP** : si l'index usuel (`prtMarkerLifeCount.1.1`) est
+  vide, l'app parcourt (walk) toute la colonne `prtMarkerLifeCount` et prend la
+  plus grande valeur — robuste aux index variables (imprimantes couleur, MFP).
+
 ### v1.9.23 — MAC sous l'IP + bouton « Compteur » imprimante
 - **Adresse MAC affichée sous l'IP** sur chaque carte de l'onglet Périphériques.
 - **Bouton « 🖨️ Compteur »** sur les cartes d'imprimante : affiche pages
