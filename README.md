@@ -23,6 +23,13 @@ détectés : box Freebox, PC, appareils Xiaomi/HP, Synology…).
 
 ## Changelog
 
+### v1.9.25 — correctif compteur imprimante (SNMP Counter32)
+- **Bug corrigé** : les compteurs SNMP de type `Counter32`/`Gauge32`/`Counter64`
+  (dont `prtMarkerLifeCount`, le compteur de pages) étaient ignorés — le
+  décodeur ne gérait que `INTEGER`/`TimeTicks`. Le nombre de pages remonte
+  désormais dès que l'imprimante expose le SNMP (ce que confirmait un script
+  Python).
+
 ### v1.9.24 — compteur imprimante : lecture SNMP plus robuste
 - **Compteur de pages SNMP** : si l'index usuel (`prtMarkerLifeCount.1.1`) est
   vide, l'app parcourt (walk) toute la colonne `prtMarkerLifeCount` et prend la

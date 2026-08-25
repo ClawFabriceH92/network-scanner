@@ -39,9 +39,15 @@ object SnmpScanner {
         fun textOrNull(): String? =
             if (tag == 0x04) raw.toString(Charsets.UTF_8) else null
 
-        /** Valeur entière si INTEGER (0x02) ou TimeTicks (0x43), sinon null. */
+        /**
+         * Valeur entière pour tous les types numériques SNMP :
+         * INTEGER (0x02), Counter32 (0x41), Gauge32/Unsigned32 (0x42),
+         * TimeTicks (0x43) et Counter64 (0x46). Indispensable pour les
+         * compteurs d'imprimante (prtMarkerLifeCount = Counter32) qui étaient
+         * ignorés quand seuls 0x02/0x43 étaient gérés.
+         */
         fun longOrNull(): Long? = when (tag) {
-            0x02, 0x43 -> {
+            0x02, 0x41, 0x42, 0x43, 0x46 -> {
                 var v = 0L
                 for (b in raw) v = (v shl 8) or (b.toInt() and 0xFF).toLong()
                 v
