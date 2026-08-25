@@ -23,6 +23,28 @@ détectés : box Freebox, PC, appareils Xiaomi/HP, Synology…).
 
 ## Changelog
 
+### v1.9.27 — popup « Compteur » complet + toners SNMP
+- **Popup « Compteur » enrichi** : modèle, état, emplacement, pages, scans,
+  copies, uptime, firmware, **niveaux de consommables** et alertes.
+- **Niveaux de toner via SNMP** (markerSuppliesLevel `43.11.1.1.9.1.x`, en % avec
+  la capacité max `43.11.1.1.8.1.x`) en repli quand l'IPP ne les expose pas —
+  comme le script Python de référence.
+
+### v1.9.26 — compteur scans/copies via page d'usage HP FutureSmart
+- **Scans & copies (HP Enterprise)** : lecture de la page d'usage EWS
+  `/hp/device/InternalPages/Index?id=UsagePage` (section « Scan Counts » /
+  « Copy Counts » → « Grand Total »), comme le script Python de référence.
+  C'est là que vivent ces compteurs sur les FutureSmart (E57540…), absents du
+  SNMP standard. Combiné au fix Counter32 (pages via SNMP), le bouton
+  « Compteur » affiche désormais pages + scans + copies.
+
+### v1.9.25 — correctif compteur imprimante (SNMP Counter32)
+- **Bug corrigé** : les compteurs SNMP de type `Counter32`/`Gauge32`/`Counter64`
+  (dont `prtMarkerLifeCount`, le compteur de pages) étaient ignorés — le
+  décodeur ne gérait que `INTEGER`/`TimeTicks`. Le nombre de pages remonte
+  désormais dès que l'imprimante expose le SNMP (ce que confirmait un script
+  Python).
+
 ### v1.9.24 — compteur imprimante : lecture SNMP plus robuste
 - **Compteur de pages SNMP** : si l'index usuel (`prtMarkerLifeCount.1.1`) est
   vide, l'app parcourt (walk) toute la colonne `prtMarkerLifeCount` et prend la

@@ -134,6 +134,24 @@ class PrinterProbeTest {
     }
 
     @Test
+    fun parseHpUsageHtml_scanAndCopyGrandTotal() {
+        val html = """
+            <html><body>
+            <h2>Scan Counts by Destination</h2>
+            <table>
+              <tr><td>Send to Email</td><td>10</td></tr>
+              <tr><td>Grand Total</td><td>1,234</td></tr>
+            </table>
+            <h2>Copy Counts by Size</h2>
+            <table><tr><td>Grand Total</td><td>420</td></tr></table>
+            </body></html>
+        """.trimIndent()
+        val u = PrinterProbe.parseHpUsageHtml(html)
+        assertEquals(1234L, u.scanImages)
+        assertEquals(420L, u.copyImpressions)
+    }
+
+    @Test
     fun buildRequest_isWellFormedIpp() {
         val req = PrinterProbe.buildGetPrinterAttributes("ipp://192.168.0.10/ipp/print")
         // version 1.1, operation-id Get-Printer-Attributes (0x000B), se termine

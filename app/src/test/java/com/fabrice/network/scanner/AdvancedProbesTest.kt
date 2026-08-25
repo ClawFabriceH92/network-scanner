@@ -245,6 +245,22 @@ class AdvancedProbesTest {
         assertEquals("WiFi", hosts[1].connectionType)
     }
 
+    // ---- SNMP : décodage des compteurs (Counter32) ----
+
+    @Test
+    fun snmp_varbind_decodesCounter32() {
+        // prtMarkerLifeCount = Counter32 (tag 0x41) : 15234 = 0x00003B82.
+        val vb = SnmpScanner.Varbind("1.3.6.1.2.1.43.10.2.1.4.1.1", 0x41, byteArrayOf(0x3B, 0x82.toByte()))
+        assertEquals(15234L, vb.longOrNull())
+    }
+
+    @Test
+    fun snmp_varbind_decodesGaugeAndInteger() {
+        assertEquals(42L, SnmpScanner.Varbind("x", 0x42, byteArrayOf(42)).longOrNull()) // Gauge32
+        assertEquals(7L, SnmpScanner.Varbind("x", 0x02, byteArrayOf(7)).longOrNull())   // INTEGER
+        assertNull(SnmpScanner.Varbind("x", 0x04, byteArrayOf(1)).longOrNull())         // OCTET STRING
+    }
+
     // ---- Latence ----
 
     @Test
