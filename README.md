@@ -23,6 +23,14 @@ détectés : box Freebox, PC, appareils Xiaomi/HP, Synology…).
 
 ## Changelog
 
+### v1.9.26 — compteur scans/copies via page d'usage HP FutureSmart
+- **Scans & copies (HP Enterprise)** : lecture de la page d'usage EWS
+  `/hp/device/InternalPages/Index?id=UsagePage` (section « Scan Counts » /
+  « Copy Counts » → « Grand Total »), comme le script Python de référence.
+  C'est là que vivent ces compteurs sur les FutureSmart (E57540…), absents du
+  SNMP standard. Combiné au fix Counter32 (pages via SNMP), le bouton
+  « Compteur » affiche désormais pages + scans + copies.
+
 ### v1.9.25 — correctif compteur imprimante (SNMP Counter32)
 - **Bug corrigé** : les compteurs SNMP de type `Counter32`/`Gauge32`/`Counter64`
   (dont `prtMarkerLifeCount`, le compteur de pages) étaient ignorés — le

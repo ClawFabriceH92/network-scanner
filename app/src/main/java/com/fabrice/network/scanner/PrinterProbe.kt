@@ -75,31 +75,91 @@ object PrinterProbe {
     fun probe(ip: String, timeoutMs: Int = 2_500): PrinterInfo? {
         val ipp = runCatching { ippGetPrinterAttributes(ip, timeoutMs) }.getOrNull()
         val snmpPages = runCatching { snmpPageCount(ip, timeoutMs) }.getOrNull()
-        // Page d'usage EWS (HP FutureSmart…) : impressions + scans + copies.
+        // Page d'usage EWS grand public (HP « Ink ») : XML DevMgmt.
         val usage = runCatching { fetchUsageCounters(ip, timeoutMs) }.getOrNull()
+        // Page d'usage EWS Enterprise (FutureSmart, ex. E57540) : HTML — c'est là
+        // que vivent les compteurs de scans/copies (absents du SNMP).
+        val html = if (usage?.scanImages == null || usage.copyImpressions == null) {
+            runCatching { fetchHpUsageHtml(ip, timeoutMs) }.getOrNull()
+        } else null
 
-        // Priorité pour les pages imprimées : usage EWS > SNMP > attribut IPP.
-        val pageCount = usage?.printImpressions ?: snmpPages ?: ipp?.pageCount
+        // Pages : SNMP (source confirmée) > usage XML > usage HTML > IPP.
+        val pageCount = snmpPages ?: usage?.printImpressions ?: html?.printImpressions ?: ipp?.pageCount
+        val scanCount = usage?.scanImages ?: html?.scanImages
+        val copyCount = usage?.copyImpressions ?: html?.copyImpressions
 
         if (ipp != null) {
-            return ipp.copy(
-                pageCount = pageCount,
-                scanCount = usage?.scanImages,
-                copyCount = usage?.copyImpressions
-            )
+            return ipp.copy(pageCount = pageCount, scanCount = scanCount, copyCount = copyCount)
         }
         // Repli SNMP : modèle via sysDescr si l'IPP est muet (631 fermé).
         val snmp = runCatching { SnmpScanner.probeBlocking(ip, timeoutMs) }.getOrNull()
-        if (snmp?.descr.isNullOrBlank() && pageCount == null &&
-            usage?.scanImages == null
-        ) return null
+        if (snmp?.descr.isNullOrBlank() && pageCount == null && scanCount == null) return null
         return PrinterInfo(
             makeAndModel = snmp?.descr?.take(120)?.trim().orEmpty(),
             uptimeSeconds = snmp?.uptimeSeconds,
             pageCount = pageCount,
-            scanCount = usage?.scanImages,
-            copyCount = usage?.copyImpressions
+            scanCount = scanCount,
+            copyCount = copyCount
         )
+    }
+
+    /** Page d'usage HTML des HP Enterprise (FutureSmart). */
+    private const val HP_USAGE_HTML = "/hp/device/InternalPages/Index?id=UsagePage"
+
+    /** Récupère et parse la page d'usage HTML FutureSmart (HTTPS puis HTTP). */
+    private fun fetchHpUsageHtml(ip: String, timeoutMs: Int): UsageCounters? {
+        for (scheme in listOf("https", "http")) {
+            val html = runCatching { httpGet("$scheme://$ip$HP_USAGE_HTML", timeoutMs) }.getOrNull()
+            if (!html.isNullOrBlank() && html.contains("Counts", ignoreCase = true)) {
+                return parseHpUsageHtml(html)
+            }
+        }
+        return null
+    }
+
+    /**
+     * Parse la page d'usage HTML FutureSmart. Pour chaque section (« Scan Counts »,
+     * « Copy Counts », « Print Counts »/« Equivalent Impressions »), on lit le
+     * « Grand Total » qui suit. Réplique la logique du script Python de référence.
+     * Fonction pure — testable.
+     */
+    fun parseHpUsageHtml(html: String): UsageCounters {
+        val lines = htmlToLines(html)
+        return UsageCounters(
+            printImpressions = sectionGrandTotal(lines, "Print Counts")
+                ?: sectionGrandTotal(lines, "Equivalent Impressions"),
+            scanImages = sectionGrandTotal(lines, "Scan Counts"),
+            copyImpressions = sectionGrandTotal(lines, "Copy Counts")
+        )
+    }
+
+    /** Convertit un HTML en lignes texte (balises → sauts de ligne, entités décodées). */
+    private fun htmlToLines(html: String): List<String> {
+        var t = html.replace(Regex("<script.*?</script>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)), " ")
+        t = t.replace(Regex("<style.*?</style>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)), " ")
+        t = t.replace(Regex("<[^>]+>"), "\n")
+        t = t.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<")
+            .replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'")
+        return t.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+    }
+
+    /**
+     * Cherche la 1re ligne contenant [sectionTitle], puis le « Grand Total »
+     * suivant (dans les ~30 lignes), puis la 1re valeur numérique après lui.
+     */
+    private fun sectionGrandTotal(lines: List<String>, sectionTitle: String): Long? {
+        val start = lines.indexOfFirst { it.contains(sectionTitle, ignoreCase = true) }
+        if (start < 0) return null
+        var gt = -1
+        for (i in start until minOf(start + 30, lines.size)) {
+            if (lines[i].equals("Grand Total", ignoreCase = true)) { gt = i; break }
+        }
+        if (gt < 0) return null
+        for (i in (gt + 1) until minOf(gt + 6, lines.size)) {
+            val m = Regex("^[\\d,]+$").find(lines[i])
+            if (m != null) return m.value.replace(",", "").toLongOrNull()
+        }
+        return null
     }
 
     /** Colonne SNMP prtMarkerLifeCount (indexée par périphérique.marqueur). */
