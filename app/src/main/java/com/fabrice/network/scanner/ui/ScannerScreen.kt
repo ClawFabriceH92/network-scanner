@@ -2048,10 +2048,28 @@ private fun DeviceCard(
                                 Text(p.makeAndModel, fontWeight = FontWeight.Medium)
                                 Spacer(Modifier.height(6.dp))
                             }
+                            if (p.state.isNotBlank()) Text("État : ${p.state}")
+                            if (p.location.isNotBlank()) Text("Emplacement : ${p.location}")
                             p.pageCount?.let { Text("Pages imprimées : $it") }
                             p.scanCount?.let { Text("Numérisations : $it") }
                             p.copyCount?.let { Text("Copies : $it") }
-                            if (p.pageCount == null && p.scanCount == null && p.copyCount == null) {
+                            p.uptimeSeconds?.let { Text("Uptime : ${SnmpScanner.formatUptime(it)}") }
+                            if (p.firmware.isNotBlank()) Text("Firmware : ${p.firmware}")
+                            if (p.supplies.isNotEmpty()) {
+                                Spacer(Modifier.height(6.dp))
+                                Text("Consommables :", fontWeight = FontWeight.Medium)
+                                p.supplies.forEach { s ->
+                                    val lvl = s.levelPercent?.let { "$it %" } ?: "niveau inconnu"
+                                    Text("• ${s.name.ifBlank { "Consommable" }} : $lvl")
+                                }
+                            }
+                            if (p.stateReasons.isNotEmpty()) {
+                                Spacer(Modifier.height(4.dp))
+                                Text("Alertes : ${p.stateReasons.joinToString(", ")}")
+                            }
+                            if (p.pageCount == null && p.scanCount == null && p.copyCount == null &&
+                                p.supplies.isEmpty()
+                            ) {
                                 Text("Aucun compteur exposé par l'imprimante.")
                             }
                         }

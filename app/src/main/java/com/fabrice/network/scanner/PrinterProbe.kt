@@ -87,20 +87,56 @@ object PrinterProbe {
         val pageCount = snmpPages ?: usage?.printImpressions ?: html?.printImpressions ?: ipp?.pageCount
         val scanCount = usage?.scanImages ?: html?.scanImages
         val copyCount = usage?.copyImpressions ?: html?.copyImpressions
+        // Consommables : IPP (marker-levels) sinon SNMP (markerSuppliesLevel).
+        val supplies = ipp?.supplies?.takeIf { it.isNotEmpty() }
+            ?: runCatching { snmpSupplies(ip, timeoutMs) }.getOrNull()
+            ?: emptyList()
 
         if (ipp != null) {
-            return ipp.copy(pageCount = pageCount, scanCount = scanCount, copyCount = copyCount)
+            return ipp.copy(
+                pageCount = pageCount, scanCount = scanCount, copyCount = copyCount,
+                supplies = supplies
+            )
         }
         // Repli SNMP : modèle via sysDescr si l'IPP est muet (631 fermé).
         val snmp = runCatching { SnmpScanner.probeBlocking(ip, timeoutMs) }.getOrNull()
-        if (snmp?.descr.isNullOrBlank() && pageCount == null && scanCount == null) return null
+        if (snmp?.descr.isNullOrBlank() && pageCount == null && scanCount == null && supplies.isEmpty()) return null
         return PrinterInfo(
             makeAndModel = snmp?.descr?.take(120)?.trim().orEmpty(),
             uptimeSeconds = snmp?.uptimeSeconds,
             pageCount = pageCount,
             scanCount = scanCount,
-            copyCount = copyCount
+            copyCount = copyCount,
+            supplies = supplies
         )
+    }
+
+    // Colonnes SNMP des consommables (Printer-MIB, RFC 3805).
+    private const val OID_SUPPLY_DESC = "1.3.6.1.2.1.43.11.1.1.6.1"
+    private const val OID_SUPPLY_MAX = "1.3.6.1.2.1.43.11.1.1.8.1"
+    private const val OID_SUPPLY_LEVEL = "1.3.6.1.2.1.43.11.1.1.9.1"
+
+    /** Niveaux de consommables via SNMP (markerSupplies), en % 0-100. */
+    private fun snmpSupplies(ip: String, timeoutMs: Int): List<Supply> {
+        fun idx(oid: String) = oid.substringAfterLast('.').toIntOrNull() ?: -1
+        val desc = SnmpScanner.walk(ip, OID_SUPPLY_DESC, timeoutMs)
+            .associate { idx(it.oid) to it.textOrNull().orEmpty() }
+        val max = SnmpScanner.walk(ip, OID_SUPPLY_MAX, timeoutMs)
+            .associate { idx(it.oid) to (it.longOrNull() ?: -1L) }
+        val level = SnmpScanner.walk(ip, OID_SUPPLY_LEVEL, timeoutMs)
+            .associate { idx(it.oid) to (it.longOrNull() ?: -1L) }
+        if (level.isEmpty()) return emptyList()
+        return level.keys.sorted().map { i ->
+            val lv = level[i] ?: -1L
+            val mx = max[i] ?: -1L
+            val pct = when {
+                lv < 0 -> null                                   // -1/-2/-3 = inconnu
+                mx > 0 -> ((lv * 100) / mx).toInt().coerceIn(0, 100)
+                lv in 0..100 -> lv.toInt()
+                else -> null
+            }
+            Supply(name = desc[i].orEmpty().ifBlank { "Consommable $i" }, levelPercent = pct)
+        }
     }
 
     /** Page d'usage HTML des HP Enterprise (FutureSmart). */
