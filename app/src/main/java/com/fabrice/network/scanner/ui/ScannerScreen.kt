@@ -2025,6 +2025,45 @@ private fun DeviceCard(
     onToggleTrust: () -> Unit
 ) {
     val semantic = LocalScannerColors.current
+    val cardScope = rememberCoroutineScope()
+    // Imprimante : type détecté, port imprimante ouvert, ou stats déjà présentes.
+    val isPrinter = device.type == "Imprimante" || device.printer != null ||
+        device.ports.any { it == 9100 || it == 631 || it == 515 }
+    var showCounter by remember(device.ip) { mutableStateOf(false) }
+    var counterInfo by remember(device.ip) { mutableStateOf(device.printer) }
+    var counterLoading by remember(device.ip) { mutableStateOf(false) }
+
+    if (showCounter) {
+        AlertDialog(
+            onDismissRequest = { showCounter = false },
+            title = { Text("🖨️ Compteur") },
+            text = {
+                when {
+                    counterLoading -> Text("Lecture des compteurs…")
+                    counterInfo == null -> Text("Compteurs indisponibles pour cette imprimante.")
+                    else -> {
+                        val p = counterInfo!!
+                        Column {
+                            if (p.makeAndModel.isNotBlank()) {
+                                Text(p.makeAndModel, fontWeight = FontWeight.Medium)
+                                Spacer(Modifier.height(6.dp))
+                            }
+                            p.pageCount?.let { Text("Pages imprimées : $it") }
+                            p.scanCount?.let { Text("Numérisations : $it") }
+                            p.copyCount?.let { Text("Copies : $it") }
+                            if (p.pageCount == null && p.scanCount == null && p.copyCount == null) {
+                                Text("Aucun compteur exposé par l'imprimante.")
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showCounter = false }) { Text("Fermer") }
+            }
+        )
+    }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -2065,6 +2104,14 @@ private fun DeviceCard(
                         text = device.ip,
                         style = LocalMonoTextStyle.current,
                         color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                // Adresse MAC sous l'IP (si connue).
+                if (device.mac.isNotBlank()) {
+                    Text(
+                        text = device.mac.uppercase(),
+                        style = LocalMonoTextStyle.current,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 if (isNew) {
@@ -2112,6 +2159,26 @@ private fun DeviceCard(
                         bg = semantic.riskCritical,
                         fg = onColorFor(semantic.riskCritical)
                     )
+                }
+                // Bouton « Compteur » pour les imprimantes : affiche pages/scans/
+                // copies (lecture live IPP+SNMP si pas déjà en cache).
+                if (isPrinter) {
+                    TextButton(
+                        onClick = {
+                            showCounter = true
+                            if (counterInfo == null && !counterLoading) {
+                                counterLoading = true
+                                cardScope.launch {
+                                    val info = withContext(Dispatchers.IO) {
+                                        runCatching { PrinterProbe.probe(device.ip) }.getOrNull()
+                                    }
+                                    counterInfo = info
+                                    counterLoading = false
+                                }
+                            }
+                        },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                    ) { Text("🖨️ Compteur") }
                 }
             }
             Column(horizontalAlignment = Alignment.End) {

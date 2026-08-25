@@ -23,6 +23,12 @@ détectés : box Freebox, PC, appareils Xiaomi/HP, Synology…).
 
 ## Changelog
 
+### v1.9.23 — MAC sous l'IP + bouton « Compteur » imprimante
+- **Adresse MAC affichée sous l'IP** sur chaque carte de l'onglet Périphériques.
+- **Bouton « 🖨️ Compteur »** sur les cartes d'imprimante : affiche pages
+  imprimées / numérisations / copies (lecture live IPP+SNMP si non déjà en
+  cache) dans une boîte de dialogue.
+
 ### v1.9.22 — écran « Ma box » : connexion, système, Wi-Fi, redémarrage
 - **Écran « 📡 Ma box »** (menu ⋮) désormais accessible : connexion WAN, débit
   temps réel, Wi-Fi box, système, baux DHCP.
