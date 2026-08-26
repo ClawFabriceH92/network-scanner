@@ -801,6 +801,20 @@ fun ScannerScreen() {
                                         screen = 8
                                     }
                                 )
+                                DropdownMenuItem(
+                                    text = { Text("Capture réseau") },
+                                    leadingIcon = {
+                                        Icon(
+                                            painterResource(R.drawable.ic_pacman),
+                                            contentDescription = null,
+                                            tint = Color.Unspecified
+                                        )
+                                    },
+                                    onClick = {
+                                        menuExpanded = false
+                                        screen = 9
+                                    }
+                                )
                             }
                         }
                     }
@@ -912,6 +926,8 @@ fun ScannerScreen() {
                 DlnaScreen(onBack = { screen = 0 })
             } else if (screen == 8) {
                 BoxScreen()
+            } else if (screen == 9) {
+                TrafficScreen(onBack = { screen = 0 })
             } else {
                 // Léger fondu à la bascule d'onglet.
                 Crossfade(
