@@ -53,6 +53,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -169,7 +170,7 @@ private sealed interface DeviceListItem {
     data class Row(val device: Device) : DeviceListItem
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ScannerScreen() {
     val context = LocalContext.current
@@ -240,6 +241,12 @@ fun ScannerScreen() {
                 .getInt("port_mode", 0)
         )
     }
+    // Dialogue « Lieu de ce scan » (choisi/confirmé au lancement d'un scan manuel).
+    var placeDialogVisible by remember { mutableStateOf(false) }
+    var placeDraft by remember { mutableStateOf("") }
+    var placeNetId by remember { mutableStateOf<String?>(null) }
+    var placeExistingNames by remember { mutableStateOf<List<String>>(emptyList()) }
+    var placeRemember by remember { mutableStateOf(false) }
     // État de la mise à jour de la base CVE
     var cveUpdating by remember { mutableStateOf(false) }
     var cveUpdateResult by remember { mutableStateOf<String?>(null) }
@@ -284,7 +291,9 @@ fun ScannerScreen() {
     // Permission de notification (Android 13+) demandée au 1er scan si les
     // alertes « nouveaux appareils » sont actives (via PermissionHelper, codes fixes).
 
-    fun runScan() {
+    // Lance réellement le scan. [placeOverride] = nom de lieu choisi par
+    // l'utilisateur pour ce scan (null → nom auto/mémorisé).
+    fun doScan(placeOverride: String?) {
         scope.launch {
             scanning = true
             error = null
@@ -447,7 +456,7 @@ fun ScannerScreen() {
                 }
                 runCatching {
                     val net = NetworkInfoProvider.read(context)
-                    ProfileStore(context).upsertCurrent(net, merged, deviceStore, nowMs)
+                    ProfileStore(context).upsertCurrent(net, merged, deviceStore, nowMs, nameOverride = placeOverride)
                 }
             }
             // Blocages programmés : applique les fenêtres dues via l'API box
@@ -462,9 +471,32 @@ fun ScannerScreen() {
             lastScanAge = null
             scanning = false
             refreshTick++
-            // Changement de passerelle détecté après ce scan → rescan auto.
-            if (onGatewayChangeDetected()) runScan()
+            // Changement de passerelle détecté après ce scan → rescan auto
+            // (silencieux : pas de dialogue de lieu sur un rescan automatique).
+            if (onGatewayChangeDetected()) doScan(null)
         }
+    }
+
+    // Point d'entrée du scan. [askPlace] = true pour les scans MANUELS : on
+    // propose de choisir/confirmer le « lieu » avant de lancer (sauf si ce réseau
+    // a déjà été confirmé « ne plus demander »). Les scans automatiques (démarrage,
+    // changement de passerelle) restent silencieux.
+    fun runScan(askPlace: Boolean = false) {
+        if (scanning) return
+        if (!askPlace) { doScan(null); return }
+        val net = runCatching { NetworkInfoProvider.read(context) }.getOrNull()
+        val store = ProfileStore(context)
+        val id = net?.let { store.idFor(it) }
+        if (net == null || id == null) { doScan(null); return }  // réseau non identifiable
+        if (TechOptions.placeConfirmed(context, id)) { doScan(null); return }  // déjà mémorisé
+        val existing = store.loadProfile(id)
+        placeNetId = id
+        placeDraft = existing?.name?.takeIf { it.isNotBlank() }
+            ?: net.ssid.takeIf { it.isNotBlank() && it != "<unknown ssid>" && it != "0x" }
+            ?: (if (net.gateway.isNotBlank()) "Réseau ${net.gateway}" else "Réseau")
+        placeExistingNames = store.list().mapNotNull { it.name.takeIf { n -> n.isNotBlank() } }.distinct()
+        placeRemember = false
+        placeDialogVisible = true
     }
 
     // Au démarrage : détecte un éventuel changement de passerelle depuis la
@@ -699,6 +731,65 @@ fun ScannerScreen() {
                     }) { Text("Copier le lien") }
                     TextButton(onClick = { showUpdateDialog = false }) { Text("Plus tard") }
                 }
+            }
+        )
+    }
+
+    // Dialogue « Lieu de ce scan » : confirmer / nommer le lieu avant un scan manuel.
+    if (placeDialogVisible) {
+        AlertDialog(
+            onDismissRequest = { placeDialogVisible = false },
+            title = { Text("📍 Lieu de ce scan") },
+            text = {
+                Column {
+                    Text(
+                        "Nomme l'endroit où tu scannes (ex. « Maison SFR », « Bureau Freebox »). " +
+                        "Il sera enregistré dans Profils / Lieux.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = placeDraft,
+                        onValueChange = { placeDraft = it },
+                        singleLine = true,
+                        label = { Text("Nom du lieu") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (placeExistingNames.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text("Lieux existants :", style = MaterialTheme.typography.labelSmall)
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            placeExistingNames.take(8).forEach { n ->
+                                FilterChip(
+                                    selected = placeDraft == n,
+                                    onClick = { placeDraft = n },
+                                    label = { Text(n) }
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = placeRemember, onCheckedChange = { placeRemember = it })
+                        Text(
+                            "Se souvenir pour ce réseau (ne plus demander ici)",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val chosen = placeDraft.trim()
+                    placeDialogVisible = false
+                    val id = placeNetId
+                    if (placeRemember && id != null) TechOptions.setPlaceConfirmed(context, id, true)
+                    doScan(chosen.ifBlank { null })
+                }) { Text("Scanner ici") }
+            },
+            dismissButton = {
+                TextButton(onClick = { placeDialogVisible = false }) { Text("Annuler") }
             }
         )
     }
@@ -969,7 +1060,7 @@ fun ScannerScreen() {
                             )
                         }
                         error?.let { msg ->
-                            ErrorBanner(message = msg, onRetry = { runScan() })
+                            ErrorBanner(message = msg, onRetry = { runScan(askPlace = true) })
                         }
                         // Bouton « Scanner » compact en haut de l'écran
                         // (remplace l'ancien FAB en bas — une seule action
@@ -979,15 +1070,15 @@ fun ScannerScreen() {
                                 scanning = scanning,
                                 progress = progress,
                                 progressTotal = progressTotal,
-                                onScan = { runScan() }
+                                onScan = { runScan(askPlace = true) }
                             )
                         }
                         if (devices.isEmpty() && !scanning) {
-                            EmptyDevicesState(onScan = { runScan() })
+                            EmptyDevicesState(onScan = { runScan(askPlace = true) })
                         } else if (devices.isNotEmpty()) {
                             PullToRefreshBox(
                                 isRefreshing = scanning,
-                                onRefresh = { if (!scanning) runScan() },
+                                onRefresh = { if (!scanning) runScan(askPlace = true) },
                                 modifier = Modifier.fillMaxSize()
                             ) {
                                 DeviceList(

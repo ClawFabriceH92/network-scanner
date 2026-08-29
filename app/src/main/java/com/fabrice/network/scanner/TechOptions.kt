@@ -53,4 +53,15 @@ object TechOptions {
 
     fun setLargeText(context: Context, value: Boolean) =
         prefs(context).edit().putBoolean(KEY_A11Y_LARGE, value).apply()
+
+    // --- Lieu de scan : « ne plus demander » mémorisé PAR réseau (id de profil).
+    // Quand l'utilisateur coche « Se souvenir pour ce réseau », les scans manuels
+    // suivants sur ce réseau réutilisent le lieu enregistré sans redemander.
+    private fun placeKey(id: String) = "place_confirmed_${id.hashCode()}"
+
+    fun placeConfirmed(context: Context, id: String): Boolean =
+        prefs(context).getBoolean(placeKey(id), false)
+
+    fun setPlaceConfirmed(context: Context, id: String, value: Boolean) =
+        prefs(context).edit().putBoolean(placeKey(id), value).apply()
 }
