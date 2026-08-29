@@ -62,7 +62,8 @@ class ProfileStore(context: Context) {
         net: NetworkInfoProvider.NetworkInfo,
         devices: List<Device>,
         deviceStore: DeviceStore?,
-        now: Long
+        now: Long,
+        nameOverride: String? = null
     ): String? {
         val id = idFor(net) ?: return null
         val existing = loadProfile(id)
@@ -71,7 +72,11 @@ class ProfileStore(context: Context) {
             net.gateway.isNotBlank() -> "Réseau ${net.gateway}"
             else -> "Réseau"
         }
-        val name = existing?.name?.takeIf { it.isNotBlank() } ?: defaultName
+        // Nom choisi par l'utilisateur au lancement du scan > nom déjà mémorisé >
+        // nom par défaut (SSID/passerelle).
+        val name = nameOverride?.takeIf { it.isNotBlank() }
+            ?: existing?.name?.takeIf { it.isNotBlank() }
+            ?: defaultName
         val createdAt = existing?.createdAt ?: now
 
         val snapshot = devices.filter { it.alive }.map { d ->
