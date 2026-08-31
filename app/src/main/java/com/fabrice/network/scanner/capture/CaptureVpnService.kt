@@ -19,6 +19,7 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.net.DatagramSocket
+import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -44,6 +45,10 @@ class CaptureVpnService : VpnService(), TunBridge {
         private const val NOTIF_ID = 4242
         private const val TUN_ADDR = "10.111.222.1"
         private const val MTU = 1500
+        // Garde-fous : arrêt automatique de la capture pour éviter le drain
+        // batterie et la saturation du stockage si l'utilisateur oublie de couper.
+        private const val MAX_CAPTURE_MS = 30L * 60_000            // 30 minutes
+        private const val MAX_CAPTURE_BYTES = 200L * 1024 * 1024   // 200 Mo
 
         fun stop(context: Context) {
             val i = Intent(context, CaptureVpnService::class.java).setAction(ACTION_STOP)
@@ -61,6 +66,7 @@ class CaptureVpnService : VpnService(), TunBridge {
     private lateinit var udp: UdpForwarder
     private var readerThread: Thread? = null
     private var publisherThread: Thread? = null
+    @Volatile private var captureStartMs = 0L
 
     private val cm by lazy { getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager }
     private val uidCache = ConcurrentHashMap<String, Int>()
@@ -83,7 +89,10 @@ class CaptureVpnService : VpnService(), TunBridge {
             .setMtu(MTU)
             .addAddress(TUN_ADDR, 32)
             .addRoute("0.0.0.0", 0)          // IPv4 uniquement
-            .addDnsServer("8.8.8.8")
+        // DNS : réutilise les serveurs DNS du réseau réel (IPv4) au lieu de forcer
+        // 8.8.8.8 — préserve la résolution des noms locaux (mafreebox.freebox.fr,
+        // *.local, box) et évite de détourner tout le DNS vers Google.
+        addLinkDnsServers(builder)
         // Ne pas capturer notre propre app (évite tout risque de boucle).
         runCatching { builder.addDisallowedApplication(packageName) }
 
@@ -103,8 +112,9 @@ class CaptureVpnService : VpnService(), TunBridge {
         inStream = FileInputStream(fd.fileDescriptor)
         outStream = FileOutputStream(fd.fileDescriptor)
 
-        // Fichier PCAP dans le stockage privé de l'app (exposé via FileProvider).
-        val dir = File(cacheDir, "captures").apply { mkdirs() }
+        // Fichier PCAP dans filesDir (persistant, PAS le cache purgeable) —
+        // exposé via FileProvider (files-path "captures/").
+        val dir = File(filesDir, "captures").apply { mkdirs() }
         val pcapFile = File(dir, "capture_${System.currentTimeMillis()}.pcap")
         pcap = try { PcapWriter(pcapFile) } catch (e: Exception) { null }
 
@@ -114,6 +124,7 @@ class CaptureVpnService : VpnService(), TunBridge {
         CaptureState.reset()
         CaptureState.setPcapPath(pcap?.file?.absolutePath)
         CaptureState.setRunning(true)
+        captureStartMs = System.currentTimeMillis()
         running = true
 
         readerThread = Thread({ readLoop() }, "capture-reader").apply { isDaemon = true; start() }
@@ -171,8 +182,37 @@ class CaptureVpnService : VpnService(), TunBridge {
             try { Thread.sleep(1000) } catch (e: InterruptedException) { break }
             CaptureState.publish()
             pcap?.flush()
+            // Arrêt automatique si la durée ou la taille max est atteinte.
+            val elapsed = System.currentTimeMillis() - captureStartMs
+            val bytes = pcap?.bytesWritten ?: 0L
+            if (elapsed >= MAX_CAPTURE_MS || bytes >= MAX_CAPTURE_BYTES) {
+                val reason = if (bytes >= MAX_CAPTURE_BYTES)
+                    "taille max (${MAX_CAPTURE_BYTES / (1024 * 1024)} Mo)"
+                else "durée max (${MAX_CAPTURE_MS / 60_000} min)"
+                CaptureState.setNotice("Capture arrêtée automatiquement : $reason atteinte.")
+                stopCapture()
+                stopSelf()
+                break
+            }
         }
         CaptureState.publish()
+    }
+
+    /** Ajoute au TUN les serveurs DNS IPv4 du réseau réel ; repli 8.8.8.8. */
+    private fun addLinkDnsServers(builder: Builder) {
+        var added = 0
+        try {
+            val lp = cm.getLinkProperties(cm.activeNetwork)
+            lp?.dnsServers?.forEach { addr ->
+                if (addr is Inet4Address) {
+                    val h = addr.hostAddress
+                    if (!h.isNullOrBlank()) { builder.addDnsServer(h); added++ }
+                }
+            }
+        } catch (e: Exception) {
+            // repli ci-dessous
+        }
+        if (added == 0) builder.addDnsServer("8.8.8.8")
     }
 
     private fun resolveUid(proto: Int, appIp: String, appPort: Int, serverIp: String, serverPort: Int): Int {

@@ -1,14 +1,42 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Règles d'extraction (Android 12+, android:dataExtractionRules).
-  Même intention que backup_rules.xml : le hash du PIN de verrouillage (prefs
-  « settings ») est exclu de la sauvegarde cloud ET du transfert d'appareil.
+
+  La sauvegarde/le transfert sont désactivés au niveau applicatif
+  (android:allowBackup="false"). Ces exclusions restent en défense en profondeur :
+  secrets des box (jeton Freebox, mot de passe Livebox), PIN, historique de
+  présence au domicile, profils de lieux, inventaires et captures de trafic ne
+  doivent jamais quitter l'appareil, ni vers le cloud ni via un transfert.
 -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="settings.xml" />
+        <exclude domain="sharedpref" path="box_prefs.xml" />
+        <exclude domain="sharedpref" path="device_store.xml" />
+        <exclude domain="sharedpref" path="wol_results.xml" />
+        <exclude domain="sharedpref" path="last_scan.xml" />
+        <exclude domain="file" path="presence_history.json" />
+        <exclude domain="file" path="scan_history.txt" />
+        <exclude domain="file" path="audit_log.json" />
+        <exclude domain="file" path="latency" />
+        <exclude domain="file" path="printer_stats" />
+        <exclude domain="file" path="profiles" />
+        <exclude domain="file" path="schedules.json" />
+        <exclude domain="file" path="captures" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="settings.xml" />
+        <exclude domain="sharedpref" path="box_prefs.xml" />
+        <exclude domain="sharedpref" path="device_store.xml" />
+        <exclude domain="sharedpref" path="wol_results.xml" />
+        <exclude domain="sharedpref" path="last_scan.xml" />
+        <exclude domain="file" path="presence_history.json" />
+        <exclude domain="file" path="scan_history.txt" />
+        <exclude domain="file" path="audit_log.json" />
+        <exclude domain="file" path="latency" />
+        <exclude domain="file" path="printer_stats" />
+        <exclude domain="file" path="profiles" />
+        <exclude domain="file" path="schedules.json" />
+        <exclude domain="file" path="captures" />
     </device-transfer>
 </data-extraction-rules>
