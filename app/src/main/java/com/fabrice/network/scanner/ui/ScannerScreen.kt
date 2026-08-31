@@ -11,6 +11,7 @@ import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -84,7 +85,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -454,9 +459,17 @@ fun ScannerScreen() {
                     val nowMs = System.currentTimeMillis()
                     val statsStore = PrinterStatsStore(context)
                     val latencyStore = LatencyHistoryStore(context)
-                    merged.forEach {
-                        runCatching { statsStore.record(it, nowMs) }
-                        runCatching { latencyStore.record(it, nowMs) }
+                    merged.forEach { d ->
+                        // Instantané précédent AVANT enregistrement (pour détecter
+                        // le franchissement du seuil toner).
+                        val prevSnap = runCatching { statsStore.latest(ScanHistory.identityKey(d)) }.getOrNull()
+                        runCatching { statsStore.record(d, nowMs) }
+                        runCatching { latencyStore.record(d, nowMs) }
+                        d.printer?.let { p ->
+                            PrinterStatsStore.tonerCrossings(prevSnap, p).forEach { s ->
+                                runCatching { NewDeviceNotifier.notifyTonerLow(context, d, s) }
+                            }
+                        }
                     }
                     runCatching {
                         val net = NetworkInfoProvider.read(context)
@@ -3080,13 +3093,55 @@ private fun PrinterSection(ip: String, key: String, info: PrinterProbe.PrinterIn
             }
         }
         if (history.size >= 2) {
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "${history.size} relevés enregistrés",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            PrinterHistoryGraph(history)
         }
+    }
+}
+
+/**
+ * Graphe d'évolution du compteur de pages (cumulatif) à partir des instantanés
+ * historisés — reproduit dans l'app la courbe du script hp_graphique.py.
+ */
+@Composable
+private fun PrinterHistoryGraph(history: List<PrinterStatsStore.Snapshot>) {
+    val pages = history.mapNotNull { it.pageCount }
+    val lineColor = MaterialTheme.colorScheme.primary
+    val gridColor = MaterialTheme.colorScheme.outlineVariant
+    Spacer(Modifier.height(6.dp))
+    Text(
+        "${history.size} relevés enregistrés",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    if (pages.size >= 2) {
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Évolution du compteur de pages",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(4.dp))
+        Canvas(Modifier.fillMaxWidth().height(90.dp)) {
+            val w = size.width
+            val h = size.height
+            drawLine(gridColor, Offset(0f, h - 1f), Offset(w, h - 1f), strokeWidth = 1f)
+            val minV = pages.minOrNull()!!.toFloat()
+            val maxV = pages.maxOrNull()!!.toFloat()
+            val range = (maxV - minV).coerceAtLeast(1f)
+            val path = Path()
+            pages.forEachIndexed { i, v ->
+                val x = (i.toFloat() / (pages.size - 1)) * w
+                val t = (v.toFloat() - minV) / range
+                val y = h - (t * (h * 0.85f)) - 3f
+                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            }
+            drawPath(path, lineColor, style = Stroke(width = 2.5f, cap = StrokeCap.Round))
+        }
+        Text(
+            "de ${pages.first()} à ${pages.last()} pages",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
