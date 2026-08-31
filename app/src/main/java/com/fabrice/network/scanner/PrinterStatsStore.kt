@@ -135,5 +135,32 @@ class PrinterStatsStore(context: Context) {
 
     companion object {
         const val MAX_SNAPSHOTS = 100
+        /** Seuil (%) sous lequel un consommable déclenche une alerte « niveau bas ». */
+        const val TONER_THRESHOLD = 15
+
+        /**
+         * Consommables qui viennent de FRANCHIR le seuil vers le bas entre le
+         * dernier instantané [prev] et l'état courant [current]. Un consommable
+         * déjà sous le seuil au relevé précédent n'est PAS re-signalé (évite le
+         * spam) ; un consommable rechargé repasse au-dessus et pourra ré-alerter.
+         * Fonction pure → testable.
+         */
+        fun tonerCrossings(
+            prev: Snapshot?,
+            current: PrinterProbe.PrinterInfo,
+            threshold: Int = TONER_THRESHOLD
+        ): List<PrinterProbe.Supply> {
+            return current.supplies.filter { s ->
+                val lvl = s.levelPercent ?: return@filter false
+                if (lvl > threshold) return@filter false
+                val prevLvl = prev?.supplies
+                    ?.firstOrNull { supplyKey(it) == supplyKey(s) }
+                    ?.levelPercent
+                prevLvl == null || prevLvl > threshold
+            }
+        }
+
+        private fun supplyKey(s: PrinterProbe.Supply): String =
+            s.name.ifBlank { s.color.ifBlank { s.type } }.lowercase()
     }
 }

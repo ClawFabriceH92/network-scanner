@@ -101,4 +101,35 @@ object NewDeviceNotifier {
             .build()
         runCatching { nm.notify(NOTIFICATION_ID + 1, notif) }
     }
+
+    /** Alerte « niveau de consommable bas » sur une imprimante (même canal). */
+    fun notifyTonerLow(context: Context, device: Device, supply: PrinterProbe.Supply) {
+        if (!isEnabled(context)) return
+        val lvl = supply.levelPercent ?: return
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            nm.createNotificationChannel(
+                NotificationChannel(CHANNEL_ID, "Nouveaux appareils", NotificationManager.IMPORTANCE_DEFAULT)
+            )
+        }
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pending = PendingIntent.getActivity(
+            context, 2, intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val label = supply.name.ifBlank { supply.color.ifBlank { supply.type } }.ifBlank { "Consommable" }
+        val printer = device.hostname.ifBlank { device.ip }
+        val notif = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle("🖨️ Niveau bas : $label ($lvl %)")
+            .setContentText("$printer — pensez à prévoir un remplacement.")
+            .setAutoCancel(true)
+            .setContentIntent(pending)
+            .build()
+        // Id stable par (imprimante, consommable) → une notif distincte par cartouche.
+        runCatching { nm.notify(2000 + ((device.ip + label).hashCode() and 0xFFFF), notif) }
+    }
 }

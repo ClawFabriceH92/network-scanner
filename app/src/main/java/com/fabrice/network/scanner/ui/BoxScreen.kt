@@ -36,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -54,6 +55,7 @@ import com.fabrice.network.scanner.BoxSystem
 import com.fabrice.network.scanner.BoxWifi
 import com.fabrice.network.scanner.FreeboxBoxClient
 import com.fabrice.network.scanner.LiveboxBoxClient
+import com.fabrice.network.scanner.NetworkInfoProvider
 import com.fabrice.network.scanner.ui.theme.LocalMonoTextStyle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -81,24 +83,43 @@ fun BoxScreen() {
     // Échantillons de débit temps réel (Mo/s) pour le graphique ↑↓
     val bwHistory = remember { mutableListOf<BoxBandwidth>() }
     var passwordDraft by remember { mutableStateOf("") }
+    // DNS réellement utilisés par le téléphone + passerelle + diagnostic box.
+    var dnsServers by remember { mutableStateOf<List<String>>(emptyList()) }
+    var gateway by remember { mutableStateOf("") }
+    var diag by remember { mutableStateOf<BoxDiag?>(null) }
 
     fun fetchAll() {
         scope.launch {
             loading = true
+            // Infos réseau (DNS, passerelle) — indépendantes de l'API box.
+            val net = withContext(Dispatchers.IO) { NetworkInfoProvider.read(context) }
+            dnsServers = net.dns
+            gateway = net.gateway
             // detect() lit /proc/net/arp + la base OUI → hors thread UI.
             val box = withContext(Dispatchers.IO) { BoxManager.detect(context) }
             client = box
+            val endpoints = mutableListOf<Pair<String, String>>()
             withContext(Dispatchers.IO) {
                 if (box == null) {
                     connection = null; bandwidth = null; wifi = null; system = null; leases = null
                 } else {
-                    connection = runCatching { box.fetchConnection() }.getOrNull()
-                    bandwidth = runCatching { box.fetchBandwidth() }.getOrNull()
-                    wifi = runCatching { box.fetchWifi() }.getOrNull()
-                    system = runCatching { box.fetchSystem() }.getOrNull()
-                    leases = runCatching { box.fetchLeases() }.getOrNull()
+                    val cRes = runCatching { box.fetchConnection() }; connection = cRes.getOrNull()
+                    endpoints.add("Connexion / WAN" to endpointStatus(cRes))
+                    val bRes = runCatching { box.fetchBandwidth() }; bandwidth = bRes.getOrNull()
+                    endpoints.add("Débit" to endpointStatus(bRes))
+                    val wRes = runCatching { box.fetchWifi() }; wifi = wRes.getOrNull()
+                    endpoints.add("WiFi" to endpointStatus(wRes))
+                    val sRes = runCatching { box.fetchSystem() }; system = sRes.getOrNull()
+                    endpoints.add("Système" to endpointStatus(sRes))
+                    val lRes = runCatching { box.fetchLeases() }; leases = lRes.getOrNull()
+                    endpoints.add("Baux DHCP" to when {
+                        lRes.isFailure -> "erreur"
+                        lRes.getOrNull().isNullOrEmpty() -> "vide"
+                        else -> "OK (${lRes.getOrNull()!!.size})"
+                    })
                 }
             }
+            diag = BoxDiag(gateway = net.gateway, boxName = box?.name, endpoints = endpoints)
             loading = false
             BoxManager.reset() // force le re-détect si la box a changé
         }
@@ -146,6 +167,10 @@ fun BoxScreen() {
                     TextButton(onClick = { fetchAll() }) { Text("🔄 Actualiser") }
                 }
             }
+
+            // DNS utilisés par le téléphone (toujours affiché, indépendant de la box).
+            Spacer(Modifier.height(8.dp))
+            DnsCard(dnsServers, gateway)
 
             val everythingNull = connection == null && bandwidth == null &&
                 wifi == null && system == null && (leases == null || leases!!.isEmpty())
@@ -209,6 +234,9 @@ fun BoxScreen() {
                     )
                 }
             }
+
+            Spacer(Modifier.height(8.dp))
+            DiagnosticCard(diag)
 
             Spacer(Modifier.height(8.dp))
             SettingsCard(
@@ -488,6 +516,137 @@ private fun BoxInfoRow(label: String, value: String, mono: Boolean = false) {
             style = if (mono) LocalMonoTextStyle.current else MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Medium
         )
+    }
+}
+
+// ---- DNS + Diagnostic (v1.9.31) -------------------------------------------
+
+/** Résumé du diagnostic box : passerelle, box détectée, statut par endpoint. */
+private data class BoxDiag(
+    val gateway: String,
+    val boxName: String?,
+    val endpoints: List<Pair<String, String>>   // (libellé, statut)
+)
+
+/** Statut d'un endpoint box : OK / vide / erreur. */
+private fun <T> endpointStatus(res: Result<T>): String = when {
+    res.isFailure -> "erreur"
+    res.getOrNull() == null -> "vide"
+    else -> "OK"
+}
+
+@Composable
+private fun DnsCard(dns: List<String>, gateway: String) {
+    Card(
+        Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text("🌐 DNS utilisés", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            if (dns.isEmpty()) {
+                Text(
+                    "Non disponible (pas de réseau actif ?).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                dns.forEach { ip ->
+                    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                        Text(
+                            ip,
+                            style = LocalMonoTextStyle.current,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            dnsLabel(ip, gateway),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DiagnosticCard(diag: BoxDiag?) {
+    if (diag == null) return
+    Card(
+        Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text("🩺 Diagnostic box", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            BoxInfoRow("Passerelle", diag.gateway.ifBlank { "—" }, mono = true)
+            BoxInfoRow("Box détectée", diag.boxName ?: "aucune (API)")
+            if (diag.endpoints.isNotEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                diag.endpoints.forEach { (label, status) ->
+                    Row(
+                        Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("●", color = statusColor(status), modifier = Modifier.padding(end = 6.dp))
+                        Text(label, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                        Text(status, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            } else if (diag.boxName == null) {
+                Text(
+                    "Aucune box pilotable par API détectée. Les box SFR récentes n'exposent pas d'API locale : le scan direct du réseau reste disponible.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+private fun statusColor(status: String): Color = when {
+    status.startsWith("OK") -> Color(0xFF2E7D32)
+    status == "vide" -> Color(0xFFF57C00)
+    status == "erreur" -> Color(0xFFC62828)
+    else -> Color(0xFF9E9E9E)
+}
+
+/** Étiquette d'un serveur DNS : box / réseau local / résolveur public / externe. */
+private fun dnsLabel(ip: String, gateway: String): String {
+    if (ip.isNotBlank() && ip == gateway) return "box (passerelle)"
+    knownResolver(ip)?.let { return it }
+    if (isPrivateIp(ip)) return "réseau local"
+    return "externe / FAI"
+}
+
+private fun knownResolver(ip: String): String? = when (ip) {
+    "8.8.8.8", "8.8.4.4", "2001:4860:4860::8888", "2001:4860:4860::8844" -> "Google"
+    "1.1.1.1", "1.0.0.1", "2606:4700:4700::1111", "2606:4700:4700::1001" -> "Cloudflare"
+    "9.9.9.9", "149.112.112.112", "2620:fe::fe", "2620:fe::9" -> "Quad9"
+    "208.67.222.222", "208.67.220.220" -> "OpenDNS"
+    "80.67.169.12", "80.67.169.40" -> "FDN"
+    "94.140.14.14", "94.140.15.15" -> "AdGuard"
+    else -> null
+}
+
+private fun isPrivateIp(ip: String): Boolean {
+    if (ip.contains(":")) {
+        val low = ip.lowercase()
+        return low == "::1" || low.startsWith("fe80") || low.startsWith("fc") || low.startsWith("fd")
+    }
+    val p = ip.split(".").mapNotNull { it.toIntOrNull() }
+    if (p.size != 4) return false
+    return when {
+        p[0] == 10 -> true
+        p[0] == 192 && p[1] == 168 -> true
+        p[0] == 172 && p[1] in 16..31 -> true
+        p[0] == 169 && p[1] == 254 -> true
+        p[0] == 127 -> true
+        else -> false
     }
 }
 

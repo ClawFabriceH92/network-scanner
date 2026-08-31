@@ -30,7 +30,8 @@ object CaptureState {
         val packetsIn: Long,
         val firstSeenMs: Long,
         val lastSeenMs: Long,
-        val status: String             // "actif" / "fermé"
+        val status: String,            // "actif" / "fermé"
+        val hostname: String           // nom d'hôte résolu (DNS/SNI), vide sinon
     )
 
     private class Mutable(
@@ -42,6 +43,7 @@ object CaptureState {
     ) {
         @Volatile var uid: Int = -1
         @Volatile var appLabel: String = ""
+        @Volatile var hostname: String = ""
         val bytesOut = AtomicLong(0)
         val bytesIn = AtomicLong(0)
         val packetsOut = AtomicLong(0)
@@ -51,6 +53,22 @@ object CaptureState {
     }
 
     private val conns = ConcurrentHashMap<String, Mutable>()
+    // Table nom↔IP alimentée par le sniff DNS ; sert de repli quand une connexion
+    // n'a pas de SNI (ex : trafic non-TLS vers une IP résolue précédemment).
+    private val dnsCache = ConcurrentHashMap<String, String>()
+
+    /** Enregistre une résolution DNS (IP → nom). */
+    fun putDns(ip: String, name: String) {
+        if (ip.isNotBlank() && name.isNotBlank()) dnsCache[ip] = name
+    }
+
+    /** Fixe le nom d'hôte d'une connexion (ex : SNI TLS), si pas déjà connu. */
+    fun setHostname(proto: String, localPort: Int, remoteIp: String, remotePort: Int, name: String) {
+        if (name.isBlank()) return
+        conns[key(proto, localPort, remoteIp, remotePort)]?.let {
+            if (it.hostname.isBlank()) it.hostname = name
+        }
+    }
 
     private val _running = MutableStateFlow(false)
     val running: StateFlow<Boolean> = _running.asStateFlow()
@@ -86,6 +104,7 @@ object CaptureState {
     /** Réinitialise l'agrégat (nouvelle session de capture). */
     fun reset() {
         conns.clear()
+        dnsCache.clear()
         _connections.value = emptyList()
         _totalOut.value = 0
         _totalIn.value = 0
@@ -156,7 +175,8 @@ object CaptureState {
                     packetsIn = it.packetsIn.get(),
                     firstSeenMs = it.firstSeenMs,
                     lastSeenMs = it.lastSeenMs,
-                    status = if (it.closed) "fermé" else "actif"
+                    status = if (it.closed) "fermé" else "actif",
+                    hostname = it.hostname.ifBlank { dnsCache[it.remoteIp] ?: "" }
                 )
             }
         _connections.value = snapshot

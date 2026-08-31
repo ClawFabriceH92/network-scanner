@@ -221,6 +221,13 @@ class TcpForwarder(private val bridge: TunBridge) {
             }
         }
 
+        // --- SNI TLS (nom d'hôte lisible dans le ClientHello) -------------
+        if (payloadLen > 5 && IpPacket.u8(pkt, payloadOff) == 0x16) {
+            DnsSniParser.parseSni(pkt, payloadOff, payloadLen)?.let {
+                CaptureState.setHostname("TCP", appPort, serverIp, serverPort, it)
+            }
+        }
+
         // --- FIN de l'app -------------------------------------------------
         if (flags and IpPacket.FIN != 0) {
             synchronized(c.lock) {
