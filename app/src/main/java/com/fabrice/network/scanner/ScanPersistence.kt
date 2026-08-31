@@ -36,6 +36,10 @@ object ScanPersistence {
             o.put("snmpName", d.snmpName ?: JSONObject.NULL)
             o.put("snmpLocation", d.snmpLocation ?: JSONObject.NULL)
             o.put("snmpUptime", d.snmpUptime ?: JSONObject.NULL)
+            // Champs sécurité : sans eux, l'alerte « credential par défaut »
+            // disparaissait au rechargement du dernier scan.
+            o.put("defaultCred", d.defaultCred ?: JSONObject.NULL)
+            o.put("credTested", d.credTested)
             arr.put(o)
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -72,7 +76,9 @@ object ScanPersistence {
                     snmpDescr = if (o.isNull("snmpDescr")) null else o.optString("snmpDescr"),
                     snmpName = if (o.isNull("snmpName")) null else o.optString("snmpName"),
                     snmpLocation = if (o.isNull("snmpLocation")) null else o.optString("snmpLocation"),
-                    snmpUptime = if (o.isNull("snmpUptime")) null else o.optLong("snmpUptime")
+                    snmpUptime = if (o.isNull("snmpUptime")) null else o.optLong("snmpUptime"),
+                    defaultCred = if (o.isNull("defaultCred")) null else o.optString("defaultCred"),
+                    credTested = o.optBoolean("credTested", false)
                 )
             }
         } catch (e: Exception) {

@@ -3,6 +3,7 @@ package com.fabrice.network.scanner
 import android.content.Context
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import java.util.concurrent.TimeUnit
@@ -68,6 +69,10 @@ object SurveillanceScheduler {
                 Constraints.Builder()
                     .setRequiresBatteryNotLow(true)
                     .setRequiresCharging(false)
+                    // Réseau non facturé (Wi-Fi) : un scan LAN n'a de sens que sur
+                    // le réseau local, et ça évite les scans vides en 4G/5G qui
+                    // déclenchaient de fausses alertes de départ.
+                    .setRequiredNetworkType(NetworkType.UNMETERED)
                     .build()
             )
             .build()

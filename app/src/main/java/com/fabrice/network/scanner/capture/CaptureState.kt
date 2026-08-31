@@ -73,9 +73,15 @@ object CaptureState {
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
+    // Message d'information neutre (ex : arrêt auto de la capture), distinct des
+    // erreurs — l'UI l'affiche en snackbar sans le ton « échec ».
+    private val _notice = MutableStateFlow<String?>(null)
+    val notice: StateFlow<String?> = _notice.asStateFlow()
+
     fun setRunning(on: Boolean) { _running.value = on }
     fun setPcapPath(path: String?) { _pcapPath.value = path }
     fun setError(msg: String?) { _error.value = msg }
+    fun setNotice(msg: String?) { _notice.value = msg }
 
     /** Réinitialise l'agrégat (nouvelle session de capture). */
     fun reset() {
@@ -85,6 +91,7 @@ object CaptureState {
         _totalIn.value = 0
         _packetCount.value = 0
         _error.value = null
+        _notice.value = null
     }
 
     private fun key(proto: String, localPort: Int, remoteIp: String, remotePort: Int) =

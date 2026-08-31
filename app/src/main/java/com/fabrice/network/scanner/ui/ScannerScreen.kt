@@ -443,20 +443,25 @@ fun ScannerScreen() {
             merged.filter { it.defaultCred != null }.take(3).forEach { d ->
                 NewDeviceNotifier.notifyDefaultCred(context, d)
             }
-            withContext(Dispatchers.IO) {
-                ScanPersistence.save(context, merged)
-                // Historise les stats des imprimantes trouvées + met à jour le
-                // profil « lieu de connexion » du réseau courant (instantané).
-                val nowMs = System.currentTimeMillis()
-                val statsStore = PrinterStatsStore(context)
-                val latencyStore = LatencyHistoryStore(context)
-                merged.forEach {
-                    runCatching { statsStore.record(it, nowMs) }
-                    runCatching { latencyStore.record(it, nowMs) }
-                }
-                runCatching {
-                    val net = NetworkInfoProvider.read(context)
-                    ProfileStore(context).upsertCurrent(net, merged, deviceStore, nowMs, nameOverride = placeOverride)
+            // IMPORTANT : ne persiste QUE si le scan a réellement trouvé des
+            // appareils. Un scan vide (Wi-Fi qui vacille, hors LAN) ne doit pas
+            // écraser le dernier inventaire connu ni le profil du lieu.
+            if (merged.isNotEmpty()) {
+                withContext(Dispatchers.IO) {
+                    ScanPersistence.save(context, merged)
+                    // Historise les stats des imprimantes trouvées + met à jour le
+                    // profil « lieu de connexion » du réseau courant (instantané).
+                    val nowMs = System.currentTimeMillis()
+                    val statsStore = PrinterStatsStore(context)
+                    val latencyStore = LatencyHistoryStore(context)
+                    merged.forEach {
+                        runCatching { statsStore.record(it, nowMs) }
+                        runCatching { latencyStore.record(it, nowMs) }
+                    }
+                    runCatching {
+                        val net = NetworkInfoProvider.read(context)
+                        ProfileStore(context).upsertCurrent(net, merged, deviceStore, nowMs, nameOverride = placeOverride)
+                    }
                 }
             }
             // Blocages programmés : applique les fenêtres dues via l'API box

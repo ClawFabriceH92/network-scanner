@@ -56,13 +56,20 @@ class SurveillanceWorker(context: Context, params: WorkerParameters) :
             }
 
             // Appareils qui étaient là et ne répondent plus (hors confiance).
-            val departed = DepartureAlert.detectDepartures(previous, devices, trusted)
-            if (departed.isNotEmpty()) {
-                DepartureAlert.notify(ctx, departed)
-                AppLog.i("Surveillance", "${departed.size} appareil(s) absent(s) → notification")
-            }
-            departed.forEach { d ->
-                auditStore.append("${d.hostname.ifBlank { d.ip }} (${d.ip}) absent")
+            // ⚠️ UNIQUEMENT si le scan a trouvé des appareils : un scan vide
+            // (téléphone hors du réseau maison, Wi-Fi coupé, autre réseau) ferait
+            // remonter TOUT l'historique comme « absent » → spam de fausses alertes.
+            if (devices.isNotEmpty()) {
+                val departed = DepartureAlert.detectDepartures(previous, devices, trusted)
+                if (departed.isNotEmpty()) {
+                    DepartureAlert.notify(ctx, departed)
+                    AppLog.i("Surveillance", "${departed.size} appareil(s) absent(s) → notification")
+                }
+                departed.forEach { d ->
+                    auditStore.append("${d.hostname.ifBlank { d.ip }} (${d.ip}) absent")
+                }
+            } else {
+                AppLog.i("Surveillance", "Scan vide (hors réseau ?) — pas de détection de départ")
             }
             auditStore.append(
                 "Scan planifié : ${devices.size} appareil(s) (${devices.count { it.alive }} en ligne)"

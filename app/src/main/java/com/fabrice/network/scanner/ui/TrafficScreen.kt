@@ -74,8 +74,8 @@ fun TrafficScreen(onBack: () -> Unit) {
     val totalIn by CaptureState.totalIn.collectAsState()
     val totalOut by CaptureState.totalOut.collectAsState()
     val packetCount by CaptureState.packetCount.collectAsState()
-    val pcapPath by CaptureState.pcapPath.collectAsState()
     val captureError by CaptureState.error.collectAsState()
+    val notice by CaptureState.notice.collectAsState()
 
     // Consentement VPN (dialogue système). Sur RESULT_OK → on démarre le service.
     val vpnLauncher = rememberLauncherForActivityResult(
@@ -97,6 +97,13 @@ fun TrafficScreen(onBack: () -> Unit) {
     LaunchedEffect(captureError) {
         captureError?.let { snackbar.showSnackbar(it) }
     }
+    LaunchedEffect(notice) {
+        notice?.let { snackbar.showSnackbar(it) }
+    }
+
+    // Captures .pcap enregistrées (filesDir/captures) — rafraîchies à l'arrêt.
+    var savedCaptures by remember { mutableStateOf(listCaptureFiles(context)) }
+    LaunchedEffect(running) { if (!running) savedCaptures = listCaptureFiles(context) }
 
     // ---- Section « usage par app » -----------------------------------------
     var hasUsage by remember { mutableStateOf(AppTrafficMonitor.hasUsageAccess(context)) }
@@ -173,14 +180,33 @@ fun TrafficScreen(onBack: () -> Unit) {
                                 StatCell("Flux", connections.size.toString())
                             }
                         }
-                        if (!running && pcapPath != null && packetCount > 0) {
-                            Spacer(Modifier.height(10.dp))
-                            OutlinedButton(
-                                onClick = { sharePcap(context, pcapPath!!) },
-                                modifier = Modifier.fillMaxWidth()
-                            ) { Text("📤 Exporter le fichier .pcap") }
+                        if (running) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "Arrêt automatique après 30 min ou 200 Mo.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
+                }
+            }
+
+            // ---- Captures enregistrées ------------------------------------
+            if (savedCaptures.isNotEmpty()) {
+                item {
+                    Text("Captures enregistrées (${savedCaptures.size})", fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleSmall)
+                }
+                items(savedCaptures, key = { it.absolutePath }) { f ->
+                    CaptureFileRow(
+                        file = f,
+                        onShare = { sharePcap(context, f.absolutePath) },
+                        onDelete = {
+                            runCatching { f.delete() }
+                            savedCaptures = listCaptureFiles(context)
+                        }
+                    )
                 }
             }
 
@@ -310,6 +336,39 @@ private fun UsageRow(u: AppTrafficMonitor.AppUsage) {
                 style = MaterialTheme.typography.bodyMedium)
         }
     }
+}
+
+@Composable
+private fun CaptureFileRow(file: File, onShare: () -> Unit, onDelete: () -> Unit) {
+    Card {
+        Row(
+            Modifier.fillMaxWidth().padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", java.util.Locale.getDefault())
+                        .format(java.util.Date(file.lastModified())),
+                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Text(
+                    "${AppTrafficMonitor.formatBytes(file.length())}  ·  .pcap",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            TextButton(onClick = onShare) { Text("Partager") }
+            TextButton(onClick = onDelete) { Text("Suppr.") }
+        }
+    }
+}
+
+/** Liste les .pcap enregistrés (filesDir/captures), du plus récent au plus ancien. */
+private fun listCaptureFiles(context: Context): List<File> {
+    val dir = File(context.filesDir, "captures")
+    val files = dir.listFiles { f -> f.isFile && f.name.endsWith(".pcap") } ?: return emptyList()
+    return files.sortedByDescending { it.lastModified() }
 }
 
 private fun startCaptureService(context: Context) {

@@ -1,10 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Règles de sauvegarde (Android 8–11, android:fullBackupContent).
-  On EXCLUT les préférences « settings » : elles contiennent le hash du PIN de
-  verrouillage (lock_pin_hash). Un PIN à 4 chiffres a un très petit espace de
-  clés ; il ne doit jamais quitter l'appareil via une sauvegarde cloud.
+
+  La sauvegarde est de toute façon DÉSACTIVÉE au niveau applicatif
+  (android:allowBackup="false") : cette app manipule des secrets d'équipement
+  (jeton Freebox, mot de passe Livebox), l'historique de présence au domicile et
+  des captures de trafic — rien de tout cela ne doit partir vers une sauvegarde
+  cloud ou un transfert d'appareil.
+
+  Ces exclusions restent listées en défense en profondeur : si la sauvegarde est
+  un jour réactivée, les données sensibles restent exclues.
 -->
 <full-backup-content>
+    <!-- Préférences : PIN de verrouillage + secrets des box -->
     <exclude domain="sharedpref" path="settings.xml" />
+    <exclude domain="sharedpref" path="box_prefs.xml" />
+    <exclude domain="sharedpref" path="device_store.xml" />
+    <exclude domain="sharedpref" path="wol_results.xml" />
+    <exclude domain="sharedpref" path="last_scan.xml" />
+    <!-- Fichiers privés : présence, profils de lieux, inventaires, captures -->
+    <exclude domain="file" path="presence_history.json" />
+    <exclude domain="file" path="scan_history.txt" />
+    <exclude domain="file" path="audit_log.json" />
+    <exclude domain="file" path="latency" />
+    <exclude domain="file" path="printer_stats" />
+    <exclude domain="file" path="profiles" />
+    <exclude domain="file" path="schedules.json" />
+    <exclude domain="file" path="captures" />
 </full-backup-content>
