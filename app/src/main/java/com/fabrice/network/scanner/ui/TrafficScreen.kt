@@ -293,14 +293,25 @@ private fun ConnRow(c: CaptureState.Conn) {
         Column(Modifier.fillMaxWidth().padding(10.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(
-                    "${c.protocol}  ${c.remoteIp}:${c.remotePort}",
+                    if (c.hostname.isNotBlank()) "${c.protocol}  ${c.hostname}"
+                    else "${c.protocol}  ${c.remoteIp}:${c.remotePort}",
                     fontWeight = FontWeight.SemiBold,
-                    style = MaterialTheme.typography.bodyMedium
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
                 )
                 Text(
                     if (c.status == "actif") "● actif" else "○ fermé",
                     style = MaterialTheme.typography.labelSmall,
                     color = if (c.status == "actif") Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (c.hostname.isNotBlank()) {
+                Text(
+                    "${c.remoteIp}:${c.remotePort}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Text(

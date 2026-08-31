@@ -50,6 +50,12 @@ class UdpForwarder(private val bridge: TunBridge) {
                     break
                 }
                 val len = dp.length
+                // Sniff DNS : les réponses (port 53) alimentent la table IP→nom.
+                if (serverPort == 53) {
+                    DnsSniParser.parseDnsResponses(buf, len).forEach { (ip, host) ->
+                        CaptureState.putDns(ip, host)
+                    }
+                }
                 val pkt = IpPacket.buildUdp(serverIp, serverPort, appIp, appPort, buf, len)
                 bridge.emit(pkt, pkt.size)
                 CaptureState.onInbound("UDP", appPort, serverIp, serverPort, len, System.currentTimeMillis())
