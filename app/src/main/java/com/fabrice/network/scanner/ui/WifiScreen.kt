@@ -273,7 +273,7 @@ fun WifiScreen() {
     }
 
     selected?.let { net ->
-        WifiNetworkDetail(net, onDismiss = { selected = null })
+        WifiNetworkDetail(net, networks, onDismiss = { selected = null })
     }
 }
 
@@ -394,10 +394,18 @@ private fun RssiSignalBar(rssi: Int) {
     }
 }
 
-/** Fiche détail d'un réseau (dialog) : champs + risques + recommandation. */
+/**
+ * Fiche détail d'un réseau (dialog), consultable AVANT connexion : champs +
+ * risques PRÉCIS (chiffrement, WPS, evil-twin, réseau ouvert/captif) +
+ * recommandations adaptées (protection avant de se connecter à un public/captif).
+ */
 @Composable
-private fun WifiNetworkDetail(net: WifiScanner.WifiNetwork, onDismiss: () -> Unit) {
-    val vuln = WifiVulnAnalyzer.analyze(net.security, net.ssid)
+private fun WifiNetworkDetail(
+    net: WifiScanner.WifiNetwork,
+    all: List<WifiScanner.WifiNetwork>,
+    onDismiss: () -> Unit
+) {
+    val vuln = WifiVulnAnalyzer.analyzeDetailed(net, all)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(net.ssid.ifBlank { "(caché)" }, fontWeight = FontWeight.Bold) },
@@ -409,18 +417,30 @@ private fun WifiNetworkDetail(net: WifiScanner.WifiNetwork, onDismiss: () -> Uni
                 InfoRow("Canal", net.channel?.toString() ?: "—", mono = true)
                 InfoRow("Signal", "${net.rssi} dBm", mono = true)
                 InfoRow("Chiffrement", net.security.label)
+                if (vuln.wps) InfoRow("WPS", "actif ⚠️")
+                if (vuln.evilTwin) InfoRow("Evil twin", "plusieurs bornes ⚠️")
                 InfoRow("Score", "${vuln.score}/100 — ${vuln.label}")
                 Spacer(Modifier.height(8.dp))
-                Text("Risques", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Text("Risques précis", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                 vuln.risks.forEach { r ->
                     Text("• $r", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 2.dp))
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Recommandation : passe ce réseau en WPA3/WPA2-CCMP et renomme-le (SSID par défaut = cible facile).",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    if (vuln.publicOrOpen) "Avant de te connecter" else "Recommandation",
+                    style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold
                 )
+                vuln.recommendations.forEach { r ->
+                    Text("→ $r", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 2.dp))
+                }
+                if (vuln.publicOrOpen) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Note : le portail captif ne se sonde qu'une fois connecté — connecte-toi VPN activé, puis reviens ici pour l'analyse du portail.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Fermer") } }
