@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -33,6 +34,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -41,7 +49,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.fabrice.network.scanner.BluetoothScanner
+import com.fabrice.network.scanner.BluetoothServiceProbe
 import com.fabrice.network.scanner.ui.theme.LocalMonoTextStyle
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Onglet « Bluetooth » : scan BT/BLE des périphériques à proximité,
@@ -180,72 +192,143 @@ private fun btTypeIcon(type: String): ImageVector = when (type) {
 
 @Composable
 private fun BtDeviceCard(device: BluetoothScanner.BtDevice) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var probing by remember { mutableStateOf(false) }
+    var probe by remember { mutableStateOf<BluetoothServiceProbe.Result?>(null) }
+    var showDialog by remember { mutableStateOf(false) }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .background(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.shapes.medium),
-                contentAlignment = Alignment.Center
+        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    btTypeIcon(device.type),
-                    contentDescription = device.type,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = device.name.ifBlank { "Inconnu" },
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 1
-                )
-                Text(
-                    text = device.mac,
-                    style = LocalMonoTextStyle.current,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = if (device.vendor.isNotBlank()) device.vendor else "Fabricant inconnu",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                if (device.services.isNotBlank()) {
-                    Text(
-                        text = device.services,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .background(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.shapes.medium),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        btTypeIcon(device.type),
+                        contentDescription = device.type,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(24.dp)
                     )
                 }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = device.name.ifBlank { "Inconnu" },
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1
+                    )
+                    Text(
+                        text = device.mac,
+                        style = LocalMonoTextStyle.current,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = if (device.vendor.isNotBlank()) device.vendor else "Fabricant inconnu",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (device.services.isNotBlank()) {
+                        Text(
+                            text = device.services,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1
+                        )
+                    }
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = "${device.rssi} dBm",
+                        style = LocalMonoTextStyle.current,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = device.type,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    RssiBar(device.rssi)
+                }
             }
-            Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    text = "${device.rssi} dBm",
-                    style = LocalMonoTextStyle.current,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = device.type,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(4.dp))
-                RssiBar(device.rssi)
+            Spacer(Modifier.height(4.dp))
+            TextButton(onClick = {
+                probe = null
+                probing = true
+                showDialog = true
+                scope.launch {
+                    val r = withContext(Dispatchers.IO) {
+                        runCatching { BluetoothServiceProbe.probe(context, device.mac) }.getOrNull()
+                    }
+                    probe = r
+                    probing = false
+                }
+            }, enabled = !probing) {
+                Text(if (probing) "🔎 Analyse…" else "🔎 Services & risques")
             }
         }
+    }
+
+    if (showDialog) {
+        AlertDialog(
+            onDismissRequest = { showDialog = false },
+            title = { Text("🔵 ${device.name.ifBlank { device.mac }}") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    if (probing) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Connexion et découverte des services…", style = MaterialTheme.typography.bodySmall)
+                        }
+                    } else {
+                        val r = probe
+                        if (r != null && r.services.isNotEmpty()) {
+                            Text("Services joignables (${r.services.size})",
+                                fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+                            Spacer(Modifier.height(4.dp))
+                            r.services.forEach { s ->
+                                Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                                    Text(s.name, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                                    Text(s.kind, style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        } else {
+                            Text(
+                                r?.note?.ifBlank { null } ?: "Échec de la sonde (permission Bluetooth ou appareil injoignable).",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        val risks = probe?.risks ?: emptyList()
+                        if (risks.isNotEmpty()) {
+                            Spacer(Modifier.height(10.dp))
+                            Text("Analyse de risque", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+                            Spacer(Modifier.height(4.dp))
+                            risks.forEach { risk ->
+                                Text(risk, style = MaterialTheme.typography.bodySmall)
+                                Spacer(Modifier.height(3.dp))
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showDialog = false }) { Text("Fermer") }
+            }
+        )
     }
 }
 
