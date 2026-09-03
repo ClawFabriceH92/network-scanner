@@ -546,6 +546,26 @@ fun ScannerScreen() {
         }
     }
 
+    // Rafraîchissement AUTO et SILENCIEUX de la base CVE : au plus une tentative
+    // par 24 h, et seulement si la base est ancienne. Télécharge le cve_db.json
+    // régénéré chaque nuit côté dépôt → base à jour sans intervention ni recompile.
+    LaunchedEffect(Unit) {
+        val prefs = context.getSharedPreferences("scan_prefs", Context.MODE_PRIVATE)
+        val now = System.currentTimeMillis()
+        if (now - prefs.getLong("cve_last_auto", 0L) > 24 * 3600_000L) {
+            prefs.edit().putLong("cve_last_auto", now).apply()
+            val stale = withContext(Dispatchers.IO) { CveDatabaseStore.isStale(context) }
+            if (stale) {
+                val db = withContext(Dispatchers.IO) { CveUpdateManager.update(context) }
+                if (db != null) {
+                    CveDatabaseStore.invalidate()
+                    cveDbVersion = db.generated
+                    cveStale = CveUpdateManager.isStale(db.generated)
+                }
+            }
+        }
+    }
+
     // --- Auto-update : vérifie GitHub Releases (manuel depuis À propos, ou
     //     silencieux au lancement — jamais sur le thread UI). ---
     fun checkAppUpdate(silent: Boolean) {
