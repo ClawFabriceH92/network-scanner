@@ -119,15 +119,9 @@ object DnsSniParser {
         return sb.toString() to next
     }
 
-    private fun ipv6(data: ByteArray, off: Int): String {
-        val sb = StringBuilder()
-        for (i in 0 until 8) {
-            if (i > 0) sb.append(':')
-            val v = ((data[off + i * 2].toInt() and 0xFF) shl 8) or (data[off + i * 2 + 1].toInt() and 0xFF)
-            sb.append(Integer.toHexString(v))
-        }
-        return sb.toString()
-    }
+    // Forme canonique partagée avec IpPacket (les clés IP→nom doivent
+    // correspondre aux IP distantes vues sur le TUN).
+    private fun ipv6(data: ByteArray, off: Int): String = IpPacket.ipv6String(data, off)
 
     // ---- TLS SNI ------------------------------------------------------------
 

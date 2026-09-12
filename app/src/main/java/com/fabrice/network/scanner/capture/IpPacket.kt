@@ -50,12 +50,34 @@ object IpPacket {
         return out
     }
 
-    /** Forme textuelle canonique d'une IPv6 (16 octets à partir de [i]). */
+    /**
+     * Forme textuelle canonique (RFC 5952) d'une IPv6 : 16 octets à partir de
+     * [i], hexa minuscule sans zéros de tête, plus longue suite de zéros
+     * compressée en « :: » (Java renvoie la forme longue non compressée).
+     */
     fun ipv6String(b: ByteArray, i: Int): String {
-        val raw = ByteArray(16)
-        System.arraycopy(b, i, raw, 0, 16)
-        return runCatching { InetAddress.getByAddress(raw).hostAddress ?: "" }
-            .getOrDefault("").substringBefore('%')
+        val groups = IntArray(8) { g -> u16(b, i + g * 2) }
+        var bestStart = -1; var bestLen = 0
+        var curStart = -1; var curLen = 0
+        for (g in 0 until 8) {
+            if (groups[g] == 0) {
+                if (curStart < 0) { curStart = g; curLen = 1 } else curLen++
+                if (curLen > bestLen) { bestStart = curStart; bestLen = curLen }
+            } else { curStart = -1; curLen = 0 }
+        }
+        if (bestLen < 2) bestStart = -1
+        val sb = StringBuilder()
+        var g = 0
+        while (g < 8) {
+            if (g == bestStart) {
+                sb.append("::"); g += bestLen
+                continue
+            }
+            if (sb.isNotEmpty() && !sb.endsWith("::")) sb.append(':')
+            sb.append(Integer.toHexString(groups[g]))
+            g++
+        }
+        return sb.toString()
     }
 
     /** Octets d'une adresse IP (4 ou 16) depuis sa forme textuelle. */
