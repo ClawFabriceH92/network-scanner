@@ -50,13 +50,17 @@ object ScanDiff {
         val out = mutableListOf<Change>()
         val prevByKey = previous.associateBy { ScanHistory.identityKey(it) }
         val curByKey = current.associateBy { ScanHistory.identityKey(it) }
+        val arp = arpAlerts(previous, current)
+        // Une IP dont la MAC a changé est déjà décrite par MAC_CHANGED : on ne la
+        // duplique pas en « nouvel appareil » + « ne répond plus ».
+        val macChangedIps = arp.filter { it.kind == Kind.MAC_CHANGED }.map { it.ip }.toSet()
 
         // Apparitions / disparitions (par identité MAC ou IP).
         curByKey.forEach { (k, d) ->
-            if (k !in prevByKey) out.add(Change(Kind.NEW_DEVICE, d.ip, d.mac, label(d), "nouvel appareil", 0))
+            if (k !in prevByKey && d.ip !in macChangedIps) out.add(Change(Kind.NEW_DEVICE, d.ip, d.mac, label(d), "nouvel appareil", 0))
         }
         prevByKey.forEach { (k, d) ->
-            if (k !in curByKey && d.alive && !d.isSelf) out.add(Change(Kind.GONE, d.ip, d.mac, label(d), "ne répond plus", 0))
+            if (k !in curByKey && d.alive && !d.isSelf && d.ip !in macChangedIps) out.add(Change(Kind.GONE, d.ip, d.mac, label(d), "ne répond plus", 0))
         }
 
         // Même identité : IP changée, ports ouverts/fermés.
@@ -79,7 +83,7 @@ object ScanDiff {
                 }
             }
         }
-        out.addAll(arpAlerts(previous, current))
+        out.addAll(arp)
         return out.sortedByDescending { it.severity }
     }
 

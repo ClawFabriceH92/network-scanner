@@ -97,7 +97,7 @@ class R3FeaturesTest {
         val fc = PrinterStatsStore.tonerForecast(h, "black cartridge", nowMs = 20 * day)!!
         assertEquals(1.0, fc.percentPerDay, 0.01)
         assertEquals(60.0, fc.daysLeft, 0.5)
-        assertEquals(80 * day, fc.emptyAtMs, day / 2)
+        assertEquals((80 * day).toDouble(), fc.emptyAtMs.toDouble(), (day / 2).toDouble())
     }
 
     @Test
