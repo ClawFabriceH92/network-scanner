@@ -144,6 +144,8 @@ import com.fabrice.network.scanner.SmbShareScanner
 import com.fabrice.network.scanner.SnmpScanner
 import com.fabrice.network.scanner.TechOptions
 import com.fabrice.network.scanner.TrackerSightingStore
+import com.fabrice.network.scanner.BtSeen
+import com.fabrice.network.scanner.BtSeenStore
 import com.fabrice.network.scanner.LaunchActions
 import com.fabrice.network.scanner.ScanWidgetProvider
 import com.fabrice.network.scanner.OutageLog
@@ -234,6 +236,8 @@ fun ScannerScreen(onShowOnboarding: () -> Unit = {}) {
     var btDevices by remember { mutableStateOf<List<BluetoothScanner.BtDevice>>(emptyList()) }
     var btScanning by remember { mutableStateOf(false) }
     var btError by remember { mutableStateOf<String?>(null) }
+    // Historique « déjà vu » des périphériques Bluetooth (v1.9.40).
+    var btSeen by remember { mutableStateOf<Map<String, BtSeen.Info>>(emptyMap()) }
     // Vulnérabilités par IP (calculées après chaque scan, base CVE embarquée)
     var vulnsByIp by remember { mutableStateOf<Map<String, VulnScanner.DeviceVulns>>(emptyMap()) }
     var cveDbVersion by remember { mutableStateOf<String?>(null) }
@@ -736,6 +740,8 @@ fun ScannerScreen(onShowOnboarding: () -> Unit = {}) {
                 withContext(Dispatchers.IO) {
                     runCatching {
                         val place = NetworkInfoProvider.read(ctx).let { ProfileStore(ctx).idFor(it) } ?: ""
+                        // « Déjà vu ? » pour tous les périphériques (v1.9.40).
+                        btSeen = BtSeenStore(ctx).recordScan(btDevices, place)
                         val following = TrackerSightingStore(ctx).recordScan(btDevices, place)
                         following.forEach { d ->
                             NewDeviceNotifier.notifySecurity(
@@ -1152,7 +1158,8 @@ fun ScannerScreen(onShowOnboarding: () -> Unit = {}) {
                         devices = btDevices,
                         scanning = btScanning,
                         error = btError,
-                        onScan = { runBtScan(context) }
+                        onScan = { runBtScan(context) },
+                        seen = btSeen
                     )
                     3 -> WifiScreen()
                     4 -> NfcScreen()

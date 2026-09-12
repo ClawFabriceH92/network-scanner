@@ -28,6 +28,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -49,6 +50,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.fabrice.network.scanner.BleTrackers
+import com.fabrice.network.scanner.BtSeen
 import com.fabrice.network.scanner.BluetoothScanner
 import com.fabrice.network.scanner.TrackerSightingStore
 import com.fabrice.network.scanner.BluetoothServiceProbe
@@ -67,9 +69,14 @@ fun BluetoothScreen(
     devices: List<BluetoothScanner.BtDevice>,
     scanning: Boolean,
     error: String?,
-    onScan: () -> Unit
+    onScan: () -> Unit,
+    seen: Map<String, BtSeen.Info> = emptyMap()
 ) {
     val context = LocalContext.current
+    // Filtre « déjà vu » (v1.9.40) : 0 = tous, 1 = nouveaux, 2 = déjà vus.
+    var seenFilter by remember { mutableStateOf(0) }
+    var showLimits by remember { mutableStateOf(false) }
+    val newCount = devices.count { seen[it.mac]?.isNew != false }
     Column(Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier
@@ -84,7 +91,8 @@ fun BluetoothScreen(
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    "Bluetooth + BLE — ${devices.size} trouvé(s)",
+                    "Bluetooth + BLE — ${devices.size} trouvé(s)" +
+                        (if (devices.isNotEmpty()) ", $newCount nouveau(x)" else ""),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -170,8 +178,21 @@ fun BluetoothScreen(
                 }) { Text("Ouvrir les réglages Bluetooth") }
             }
         } else if (devices.isNotEmpty()) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                FilterChip(selected = seenFilter == 0, onClick = { seenFilter = 0 }, label = { Text("Tous") })
+                FilterChip(selected = seenFilter == 1, onClick = { seenFilter = 1 }, label = { Text("🆕 Nouveaux ($newCount)") })
+                FilterChip(selected = seenFilter == 2, onClick = { seenFilter = 2 }, label = { Text("Déjà vus (${devices.size - newCount})") })
+            }
             // Traceurs d'abord, puis par signal.
-            val sorted = devices.sortedWith(compareByDescending<BluetoothScanner.BtDevice> { it.trackerType.isNotBlank() }.thenByDescending { it.rssi })
+            val sorted = devices
+                .filter { d ->
+                    val isNew = seen[d.mac]?.isNew != false
+                    when (seenFilter) { 1 -> isNew; 2 -> !isNew; else -> true }
+                }
+                .sortedWith(compareByDescending<BluetoothScanner.BtDevice> { it.trackerType.isNotBlank() }.thenByDescending { it.rssi })
             val store = remember { TrackerSightingStore(context) }
             val assessments = remember(devices) {
                 devices.filter { it.trackerType.isNotBlank() }.associate { it.mac to store.assess(it.mac) }
@@ -209,7 +230,34 @@ fun BluetoothScreen(
                     }
                 }
                 items(sorted, key = { it.mac }) { device ->
-                    BtDeviceCard(device, assessments[device.mac])
+                    BtDeviceCard(device, assessments[device.mac], seen[device.mac])
+                }
+                item(key = "limits") {
+                    Card(
+                        modifier = Modifier.fillMaxWidth().clickable { showLimits = !showLimits },
+                        shape = MaterialTheme.shapes.large,
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
+                    ) {
+                        Column(Modifier.padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("ℹ️ Ce que le scan ne montre pas", fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                                Text(if (showLimits) "▲" else "▼", style = MaterialTheme.typography.labelMedium)
+                            }
+                            if (showLimits) {
+                                listOf(
+                                    "• Le contenu des échanges Bluetooth : rien n'est intercepté ni déchiffré.",
+                                    "• Les caractéristiques protégées par appairage : seules celles lisibles librement (fabricant, modèle, firmware, batterie) sont lues, et uniquement avec « Services & risques ».",
+                                    "• Les failles de pile (BlueBorne, KNOB, BIAS) : elles dépendent de la version d'OS ou de firmware, invisible à distance.",
+                                    "• Une identité stable : beaucoup d'appareils BLE changent d'adresse (téléphones, AirTag toutes les 24 h) et repassent donc pour « nouveaux ».",
+                                    "• Les appareils hors de portée ou en veille radio : un scan dure 12 s, un appareil silencieux à ce moment-là n'apparaît pas."
+                                ).forEach {
+                                    Text(it, style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -225,7 +273,11 @@ private fun btTypeIcon(type: String): ImageVector = when (type) {
 }
 
 @Composable
-private fun BtDeviceCard(device: BluetoothScanner.BtDevice, tracker: BleTrackers.Assessment? = null) {
+private fun BtDeviceCard(
+    device: BluetoothScanner.BtDevice,
+    tracker: BleTrackers.Assessment? = null,
+    seen: BtSeen.Info? = null
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var probing by remember { mutableStateOf(false) }
@@ -271,6 +323,12 @@ private fun BtDeviceCard(device: BluetoothScanner.BtDevice, tracker: BleTrackers
                         text = if (device.vendor.isNotBlank()) device.vendor else "Fabricant inconnu",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = seen?.label() ?: "🆕 Jamais vu avant ce scan",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (seen?.isNew != false) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     if (device.trackerType.isNotBlank()) {
                         Text(
@@ -340,6 +398,19 @@ private fun BtDeviceCard(device: BluetoothScanner.BtDevice, tracker: BleTrackers
                         }
                     } else {
                         val r = probe
+                        if (r != null && r.details.isNotEmpty()) {
+                            Text("Informations lues (sans appairage)", fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.bodyMedium)
+                            Spacer(Modifier.height(4.dp))
+                            r.details.forEach { (k, v) ->
+                                Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                                    Text(k, style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(100.dp))
+                                    Text(v, style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                            Spacer(Modifier.height(8.dp))
+                        }
                         if (r != null && r.services.isNotEmpty()) {
                             Text("Services joignables (${r.services.size})",
                                 fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)

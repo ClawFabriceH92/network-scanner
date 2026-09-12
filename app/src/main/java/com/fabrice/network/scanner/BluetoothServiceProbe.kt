@@ -5,6 +5,7 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
+import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothProfile
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -38,8 +39,46 @@ object BluetoothServiceProbe {
     data class Result(
         val services: List<BtService>,
         val risks: List<String>,
-        val note: String
+        val note: String,
+        /** Caractéristiques lisibles SANS appairage (v1.9.40) : fabricant, modèle, firmware, batterie… */
+        val details: List<Pair<String, String>> = emptyList()
     )
+
+    /** Services + caractéristiques lues d'une session GATT. */
+    data class GattInfo(val services: List<String>, val details: List<Pair<String, String>>)
+
+    /** Caractéristiques standard lisibles sans appairage → libellé. */
+    val READABLE_CHARS: Map<String, String> = linkedMapOf(
+        "2A00" to "Nom (GAP)",
+        "2A29" to "Fabricant",
+        "2A24" to "Modèle",
+        "2A25" to "N° de série",
+        "2A26" to "Firmware",
+        "2A27" to "Matériel",
+        "2A28" to "Logiciel",
+        "2A19" to "Batterie",
+        "2A01" to "Apparence"
+    )
+
+    /** Formate la valeur brute d'une caractéristique connue (pure, testable). */
+    fun formatCharacteristic(short: String, value: ByteArray): String? {
+        if (value.isEmpty()) return null
+        return when (short) {
+            "2A19" -> "${value[0].toInt() and 0xFF} %"
+            "2A01" -> appearanceName(((value.getOrElse(1) { 0 }.toInt() and 0xFF) shl 8) or (value[0].toInt() and 0xFF))
+            else -> String(value, Charsets.UTF_8).trim().trimEnd('\u0000').ifBlank { null }
+        }
+    }
+
+    /** Catégorie d'apparence GAP (bits 15..6). */
+    fun appearanceName(v: Int): String = when (v shr 6) {
+        1 -> "Téléphone"; 2 -> "Ordinateur"; 3 -> "Montre"; 4 -> "Horloge"; 5 -> "Écran"
+        6 -> "Télécommande"; 7 -> "Lunettes"; 8 -> "Tag"; 9 -> "Porte-clés"; 10 -> "Lecteur média"
+        11 -> "Lecteur code-barres"; 12 -> "Thermomètre"; 13 -> "Cardiofréquencemètre"; 14 -> "Tensiomètre"
+        15 -> "HID (clavier/souris…)"; 16 -> "Glucomètre"; 17 -> "Capteur course"; 18 -> "Capteur vélo"
+        49 -> "Oxymètre"; 50 -> "Balance"; 0x0F -> "HID"
+        else -> "Catégorie $v"
+    }
 
     /** Nom lisible d'un UUID Bluetooth assigné (16 bits), sinon "propriétaire". */
     fun uuidName(uuid: String): String {
@@ -136,7 +175,8 @@ object BluetoothServiceProbe {
         runCatching { sdpUuids(context, device) }.getOrDefault(emptyList()).forEach { u ->
             services[canon(u)] = BtService(u, uuidName(u), "SDP")
         }
-        runCatching { gattServices(context, device) }.getOrDefault(emptyList()).forEach { u ->
+        val gatt = runCatching { gattServices(context, device) }.getOrDefault(GattInfo(emptyList(), emptyList()))
+        gatt.services.forEach { u ->
             // GATT prime sur SDP si doublon (service réellement joignable).
             services[canon(u)] = BtService(u, uuidName(u), "GATT")
         }
@@ -145,7 +185,7 @@ object BluetoothServiceProbe {
         val note = if (list.isEmpty())
             "Aucun service joignable détecté (appareil hors de portée, éteint, ou refusant la connexion)."
         else ""
-        return Result(list, assessRisks(list), note)
+        return Result(list, assessRisks(list), note, gatt.details)
     }
 
     /** UUID des profils classiques via SDP (+ cache d'appairage). */
@@ -182,42 +222,81 @@ object BluetoothServiceProbe {
             }
         }
 
-    /** Services GATT (BLE) via connexion + discoverServices. */
+    /**
+     * Services GATT (BLE) via connexion + discoverServices, puis lecture en
+     * série des caractéristiques standard lisibles sans appairage (Device
+     * Information, Battery, Generic Access) — v1.9.40.
+     */
     @SuppressLint("MissingPermission")
-    private suspend fun gattServices(context: Context, device: BluetoothDevice): List<String> =
+    private suspend fun gattServices(context: Context, device: BluetoothDevice): GattInfo =
         suspendCancellableCoroutine { cont ->
             val handler = Handler(Looper.getMainLooper())
             var gatt: BluetoothGatt? = null
             var resumed = false
             lateinit var timeout: Runnable
+            val found = mutableListOf<String>()
+            val details = mutableListOf<Pair<String, String>>()
+            val queue = ArrayDeque<BluetoothGattCharacteristic>()
 
-            fun finish(list: List<String>) {
+            fun finish() {
                 if (resumed) return
                 resumed = true
                 handler.removeCallbacks(timeout)
                 runCatching { gatt?.close() }
-                if (cont.isActive) cont.resume(list)
+                if (cont.isActive) cont.resume(GattInfo(found.toList(), details.toList()))
+            }
+
+            fun readNext(g: BluetoothGatt) {
+                val c = queue.removeFirstOrNull() ?: run { finish(); return }
+                val ok = runCatching { g.readCharacteristic(c) }.getOrDefault(false)
+                if (!ok) readNext(g)
+            }
+
+            fun onRead(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray?, status: Int) {
+                if (status == BluetoothGatt.GATT_SUCCESS && value != null) {
+                    val sh = short(c.uuid.toString())
+                    val label = READABLE_CHARS[sh]
+                    val text = formatCharacteristic(sh, value)
+                    if (label != null && text != null) details.add(label to text)
+                }
+                readNext(g)
             }
 
             val cb = object : BluetoothGattCallback() {
                 override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
                     when (newState) {
                         BluetoothProfile.STATE_CONNECTED -> runCatching { g.discoverServices() }
-                        BluetoothProfile.STATE_DISCONNECTED -> finish(emptyList())
+                        BluetoothProfile.STATE_DISCONNECTED -> finish()
                     }
                 }
 
                 override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
-                    val out = mutableListOf<String>()
                     if (status == BluetoothGatt.GATT_SUCCESS) {
-                        runCatching { g.services }.getOrNull()?.forEach { out.add(it.uuid.toString()) }
+                        runCatching { g.services }.getOrNull()?.forEach { s ->
+                            found.add(s.uuid.toString())
+                            s.characteristics.forEach { c ->
+                                val readable = c.properties and BluetoothGattCharacteristic.PROPERTY_READ != 0
+                                if (readable && READABLE_CHARS.containsKey(short(c.uuid.toString()))) queue.add(c)
+                            }
+                        }
                     }
-                    finish(out)
+                    if (queue.isEmpty()) finish() else readNext(g)
+                }
+
+                @Deprecated("Deprecated in Java")
+                override fun onCharacteristicRead(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) {
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                        @Suppress("DEPRECATION") onRead(g, c, c.value, status)
+                    }
+                }
+
+                override fun onCharacteristicRead(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray, status: Int) {
+                    onRead(g, c, value, status)
                 }
             }
 
-            timeout = Runnable { finish(emptyList()) }
-            handler.postDelayed(timeout, 9_000)
+            timeout = Runnable { finish() }
+            handler.postDelayed(timeout, 12_000)
 
             gatt = runCatching {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
@@ -225,7 +304,7 @@ object BluetoothServiceProbe {
                 else
                     device.connectGatt(context, false, cb)
             }.getOrNull()
-            if (gatt == null) finish(emptyList())
+            if (gatt == null) finish()
 
             cont.invokeOnCancellation {
                 handler.removeCallbacks(timeout)
