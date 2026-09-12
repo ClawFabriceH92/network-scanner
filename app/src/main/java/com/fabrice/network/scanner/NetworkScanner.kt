@@ -3,6 +3,9 @@ package com.fabrice.network.scanner
 import android.content.SharedPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.coroutineScope
 import java.net.Inet4Address
 import java.net.InetAddress
@@ -79,6 +82,9 @@ data class PingResult(val alive: Boolean, val ttl: Int?, val latencyMs: Int? = n
  *    ligne (api.macvendors.com) si le préfixe est inconnu localement.
  */
 object NetworkScanner {
+
+    /** Hôtes enrichis simultanément (scan de ports + sondes) — v1.9.35. */
+    const val ENRICH_PARALLELISM = 8
 
     fun ipToInt(ip: String): Long {
         val parts = ip.split(".").map { it.toLong() }
@@ -247,6 +253,17 @@ object NetworkScanner {
             (if (doEnrich) hosts.size else 0)
         val probed = java.util.concurrent.atomic.AtomicInteger(0)
 
+        // Attente d'un pool en restant ANNULABLE (bouton Stop, v1.9.35) : on
+        // sonde toutes les 250 ms et on jette CancellationException si le scan a
+        // été annulé — le finally de l'appelant force alors shutdownNow().
+        fun awaitCancellable(executor: java.util.concurrent.ExecutorService, maxMs: Long) {
+            val deadline = System.currentTimeMillis() + maxMs
+            while (!executor.awaitTermination(250, TimeUnit.MILLISECONDS)) {
+                ensureActive()
+                if (System.currentTimeMillis() > deadline) break
+            }
+        }
+
         fun pingSweep() {
             // 2 vagues : la 2e rattrape les appareils lents/endormis (1re réponse
             // souvent perdue).
@@ -268,7 +285,7 @@ object NetworkScanner {
                         }
                     }
                     executor.shutdown()
-                    executor.awaitTermination(120, TimeUnit.SECONDS)
+                    awaitCancellable(executor, 120_000)
                 } finally {
                     // isTerminated (et non isShutdown, déjà vrai après shutdown()) :
                     // si awaitTermination expire, on force réellement l'arrêt des
@@ -278,6 +295,7 @@ object NetworkScanner {
                 if (wave == 0) {
                     // Laisse les réponses lentes arriver avant la 2e vague.
                     Thread.sleep(1_500)
+                    ensureActive()
                 }
             }
         }
@@ -303,7 +321,7 @@ object NetworkScanner {
                     }
                 }
                 executor.shutdown()
-                executor.awaitTermination(60, TimeUnit.SECONDS)
+                awaitCancellable(executor, 60_000)
             } finally {
                 if (!executor.isTerminated) executor.shutdownNow()
             }
@@ -374,11 +392,12 @@ object NetworkScanner {
 
         // Cache en mémoire des fabricants résolus en ligne : évite d'interroger
         // deux fois le même préfixe OUI au cours d'un même scan.
-        val vendorCache = HashMap<String, String>()
+        val vendorCache = java.util.concurrent.ConcurrentHashMap<String, String>()
 
         val localIp = ip
         val gatewayIp = NetworkInfoProvider.readGateway()
-        val baseDevices = allIps.map { host ->
+        // Fiche complète d'un hôte (ports, bannières, SNMP, SMB, TLS, imprimante…).
+        fun enrichHost(host: String): Device {
             var mac = arpAll[host] ?: ""
             var hostname = reverseDns(host)
             // Hôte « vivant » : a répondu au ping OU à une découverte multicast
@@ -547,9 +566,16 @@ object NetworkScanner {
                     onProgress(done.coerceAtMost(totalProbes), totalProbes)
                 }
             }
-            built
-            // Tri : le périphérique qui lance le scan (isSelf) TOUT EN HAUT,
-            // puis les autres par IP.
+            return built
+        }
+
+        // Enrichissement PARALLÈLE par hôte (v1.9.35) : au plus ENRICH_PARALLELISM
+        // hôtes à la fois (chaque hôte ouvre déjà son propre pool de scan de
+        // ports) — divise la durée sur un réseau chargé, reste annulable.
+        val enrichGate = kotlinx.coroutines.sync.Semaphore(ENRICH_PARALLELISM)
+        val baseDevices = coroutineScope {
+            allIps.map { host -> async(Dispatchers.IO) { enrichGate.withPermit { ensureActive(); enrichHost(host) } } }
+                .awaitAll()
         }.sortedWith(
             compareByDescending<Device> { it.isSelf }
                 .thenBy { it.ip }

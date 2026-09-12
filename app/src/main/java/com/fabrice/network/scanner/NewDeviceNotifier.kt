@@ -102,6 +102,34 @@ object NewDeviceNotifier {
         runCatching { nm.notify(NOTIFICATION_ID + 1, notif) }
     }
 
+    /** Alerte sécurité générique (usurpation ARP, redirection de port…) — v1.9.35. */
+    fun notifySecurity(context: Context, title: String, text: String, id: Int) {
+        if (!isEnabled(context)) return
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            nm.createNotificationChannel(
+                NotificationChannel(CHANNEL_ID, "Nouveaux appareils", NotificationManager.IMPORTANCE_DEFAULT)
+            )
+        }
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pending = PendingIntent.getActivity(
+            context, id, intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val notif = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setAutoCancel(true)
+            .setContentIntent(pending)
+            .build()
+        runCatching { nm.notify(id, notif) }
+    }
+
     /** Alerte « niveau de consommable bas » sur une imprimante (même canal). */
     fun notifyTonerLow(context: Context, device: Device, supply: PrinterProbe.Supply) {
         if (!isEnabled(context)) return

@@ -71,6 +71,15 @@ class SurveillanceWorker(context: Context, params: WorkerParameters) :
             } else {
                 AppLog.i("Surveillance", "Scan vide (hors réseau ?) — pas de détection de départ")
             }
+            // Usurpation ARP (v1.9.35) : MAC de la passerelle changée / MAC dupliquée.
+            if (devices.isNotEmpty()) {
+                val arp = ScanDiff.arpAlerts(previous, devices)
+                arp.forEach { c -> auditStore.append(c.message) }
+                arp.filter { it.severity >= 2 }.take(1).forEach { c ->
+                    NewDeviceNotifier.notifySecurity(ctx, "🚨 Usurpation ARP possible", c.message, 3001)
+                    AppLog.i("Surveillance", "Alerte ARP : ${c.message}")
+                }
+            }
             auditStore.append(
                 "Scan planifié : ${devices.size} appareil(s) (${devices.count { it.alive }} en ligne)"
             )

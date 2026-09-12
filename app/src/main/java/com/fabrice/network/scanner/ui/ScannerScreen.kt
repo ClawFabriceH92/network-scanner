@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -52,6 +53,7 @@ import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -133,6 +135,7 @@ import com.fabrice.network.scanner.PortScanner
 import com.fabrice.network.scanner.PrinterProbe
 import com.fabrice.network.scanner.PrinterStatsStore
 import com.fabrice.network.scanner.ProfileStore
+import com.fabrice.network.scanner.ScanDiff
 import com.fabrice.network.scanner.ScanHistory
 import com.fabrice.network.scanner.ScanPersistence
 import com.fabrice.network.scanner.ScheduleStore
@@ -190,6 +193,10 @@ fun ScannerScreen() {
 
     var devices by remember { mutableStateOf<List<Device>>(emptyList()) }
     var scanning by remember { mutableStateOf(false) }
+    // Job du scan en cours (bouton Stop, v1.9.35) + diff structuré vs dernier scan.
+    var scanJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var lastChanges by remember { mutableStateOf<List<ScanDiff.Change>>(emptyList()) }
+    var changesDialog by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf(0) }
     var progressTotal by remember { mutableStateOf(0) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -299,7 +306,7 @@ fun ScannerScreen() {
     // Lance réellement le scan. [placeOverride] = nom de lieu choisi par
     // l'utilisateur pour ce scan (null → nom auto/mémorisé).
     fun doScan(placeOverride: String?) {
-        scope.launch {
+        scanJob = scope.launch {
             scanning = true
             error = null
             progress = 0
@@ -361,6 +368,12 @@ fun ScannerScreen() {
                         progressTotal = total
                     }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Bouton Stop : on garde l'inventaire précédent, sans erreur.
+                AppLog.i("Scan", "Scan interrompu par l'utilisateur")
+                scanning = false
+                progress = 0; progressTotal = 0
+                return@launch
             } catch (e: Exception) {
                 error = e.message ?: "Erreur inconnue"
                 AppLog.e("Scan", "Échec du scan : ${e.message}")
@@ -443,6 +456,18 @@ fun ScannerScreen() {
             // par IP : sur Android 10+, /proc/net/arp est vidé, donc la box est la
             // source fiable des MAC de tout le réseau. Redonne aussi le fabricant.
             val merged = mergeBoxMacs(result, boxDevices, oui)
+            // Diff structuré vs dernier scan persisté (ports, MAC/IP, ARP) — v1.9.35.
+            if (merged.isNotEmpty()) {
+                val previousFull = withContext(Dispatchers.IO) { ScanPersistence.load(context) }.orEmpty()
+                val changes = ScanDiff.compute(previousFull, merged)
+                lastChanges = changes
+                withContext(Dispatchers.IO) {
+                    changes.filter { it.severity >= 1 }.forEach { c -> runCatching { auditStore.append(c.message) } }
+                }
+                changes.filter { it.severity >= 2 }.take(1).forEach { c ->
+                    NewDeviceNotifier.notifySecurity(context, "🚨 Usurpation ARP possible", c.message, 3001)
+                }
+            }
             devices = merged
             // Alerte push si une credential par défaut a été trouvée (même canal)
             merged.filter { it.defaultCred != null }.take(3).forEach { d ->
@@ -774,6 +799,9 @@ fun ScannerScreen() {
     }
 
     // Dialogue « Lieu de ce scan » : confirmer / nommer le lieu avant un scan manuel.
+    if (changesDialog) {
+        ChangesDialog(changes = lastChanges, onDismiss = { changesDialog = false })
+    }
     if (placeDialogVisible) {
         AlertDialog(
             onDismissRequest = { placeDialogVisible = false },
@@ -1108,7 +1136,8 @@ fun ScannerScreen() {
                                 scanning = scanning,
                                 progress = progress,
                                 progressTotal = progressTotal,
-                                onScan = { runScan(askPlace = true) }
+                                onScan = { runScan(askPlace = true) },
+                                onStop = { scanJob?.cancel() }
                             )
                         }
                         if (devices.isEmpty() && !scanning) {
@@ -1140,6 +1169,8 @@ fun ScannerScreen() {
                                     vulnsByIp = vulnsByIp,
                                     newDevices = newDevices,
                                     onNewDevicesClick = { screen = 3 },
+                                    changes = lastChanges,
+                                    onChangesClick = { changesDialog = true },
                                     cveDbVersion = cveDbVersion,
                                     cveStale = cveStale,
                                     cveUpdateResult = cveUpdateResult,
@@ -1301,6 +1332,8 @@ private fun DeviceList(
     vulnsByIp: Map<String, VulnScanner.DeviceVulns>,
     newDevices: List<Device>,
     onNewDevicesClick: () -> Unit,
+    changes: List<ScanDiff.Change> = emptyList(),
+    onChangesClick: () -> Unit = {},
     cveDbVersion: String?,
     cveStale: Boolean,
     cveUpdateResult: String?,
@@ -1359,6 +1392,9 @@ private fun DeviceList(
         }
         if (newNetworkBanner) {
             item(key = "newnetwork") { NewNetworkBanner(onDismiss = onNewNetworkDismiss) }
+        }
+        if (changes.isNotEmpty()) {
+            item(key = "changes") { ChangesBanner(changes = changes, onClick = onChangesClick) }
         }
         if (maxRisk != null && riskCount > 0 && !riskBannerDismissed) {
             item(key = "risk") {
@@ -1663,7 +1699,8 @@ private fun ScanButton(
     scanning: Boolean,
     progress: Int,
     progressTotal: Int,
-    onScan: () -> Unit
+    onScan: () -> Unit,
+    onStop: () -> Unit = {}
 ) {
     Row(
         modifier = Modifier
@@ -1671,6 +1708,10 @@ private fun ScanButton(
             .padding(horizontal = 12.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.End
     ) {
+        if (scanning) {
+            OutlinedButton(onClick = onStop, shape = MaterialTheme.shapes.medium) { Text("⏹ Stop") }
+            Spacer(Modifier.width(8.dp))
+        }
         Button(
             onClick = { if (!scanning) onScan() },
             shape = MaterialTheme.shapes.medium
@@ -1763,6 +1804,55 @@ private fun NewDevicesBanner(newDevices: List<Device>, onClick: () -> Unit) {
             )
         }
     }
+}
+
+/** Bandeau « changements depuis le dernier scan » (diff structuré, v1.9.35). */
+@Composable
+private fun ChangesBanner(changes: List<ScanDiff.Change>, onClick: () -> Unit) {
+    val alert = changes.any { it.severity >= 2 }
+    val bg = if (alert) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer
+    val fg = if (alert) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = bg)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                (if (alert) "🚨 " else "🔀 ") + ScanDiff.summary(changes) + " depuis le dernier scan",
+                color = fg, fontWeight = FontWeight.Bold,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f)
+            )
+            Text("Voir →", color = fg, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+/** Détail des changements (ports, MAC/IP, ARP) entre les deux derniers scans. */
+@Composable
+private fun ChangesDialog(changes: List<ScanDiff.Change>, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Changements depuis le dernier scan") },
+        text = {
+            LazyColumn(Modifier.heightIn(max = 420.dp)) {
+                items(changes) { c ->
+                    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                        Text("${c.icon} ${c.name.ifBlank { c.ip }}  ·  ${c.ip}",
+                            fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                        Text(c.detail, style = MaterialTheme.typography.bodySmall,
+                            color = if (c.severity >= 2) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Fermer") } }
+    )
 }
 
 /** Bandeau « nouveau réseau détecté » (changement de passerelle). */
