@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.fabrice.network.scanner.PermissionHelper
 import com.fabrice.network.scanner.PublicWifiAnalyzer
+import com.fabrice.network.scanner.DnsHijackTest
 import com.fabrice.network.scanner.WifiChannels
 import com.fabrice.network.scanner.WifiScanner
 import com.fabrice.network.scanner.WifiVulnAnalyzer
@@ -91,6 +92,8 @@ fun WifiScreen() {
         }.getOrNull()
     }
     var showChannels by remember { mutableStateOf(false) }
+    // Test de détournement DNS du réseau connecté (v1.9.37).
+    var dnsVerdict by remember { mutableStateOf<DnsHijackTest.Verdict?>(null) }
 
     // lateinit : la lambda est assignée après (évite la forward reference)
     lateinit var runWifiScan: () -> Unit
@@ -117,6 +120,9 @@ fun WifiScreen() {
             }
             publicVuln = vuln
             publicChecked = true
+            dnsVerdict = withContext(Dispatchers.IO) {
+                runCatching { DnsHijackTest.evaluate(DnsHijackTest.run(context)) }.getOrNull()
+            }
         }
     }
 
@@ -210,6 +216,16 @@ fun WifiScreen() {
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                 )
             }
+        }
+
+        dnsVerdict?.let { v ->
+            Text(
+                (when (v.level) { 2 -> "🚨 DNS : "; 1 -> "⚠️ DNS : "; else -> "✅ DNS : " }) + v.summary,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = when (v.level) { 2 -> MaterialTheme.colorScheme.error; 1 -> androidx.compose.ui.graphics.Color(0xFFB26A00); else -> androidx.compose.ui.graphics.Color(0xFF2E7D32) },
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
+            )
         }
 
         error?.let {

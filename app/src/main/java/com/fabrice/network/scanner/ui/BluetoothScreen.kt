@@ -48,7 +48,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.fabrice.network.scanner.BleTrackers
 import com.fabrice.network.scanner.BluetoothScanner
+import com.fabrice.network.scanner.TrackerSightingStore
 import com.fabrice.network.scanner.BluetoothServiceProbe
 import com.fabrice.network.scanner.ui.theme.LocalMonoTextStyle
 import kotlinx.coroutines.Dispatchers
@@ -168,14 +170,46 @@ fun BluetoothScreen(
                 }) { Text("Ouvrir les réglages Bluetooth") }
             }
         } else if (devices.isNotEmpty()) {
-            val sorted = devices.sortedByDescending { it.rssi }
+            // Traceurs d'abord, puis par signal.
+            val sorted = devices.sortedWith(compareByDescending<BluetoothScanner.BtDevice> { it.trackerType.isNotBlank() }.thenByDescending { it.rssi })
+            val store = remember { TrackerSightingStore(context) }
+            val assessments = remember(devices) {
+                devices.filter { it.trackerType.isNotBlank() }.associate { it.mac to store.assess(it.mac) }
+            }
+            val trackers = devices.filter { it.trackerType.isNotBlank() && it.type != "apparié" }
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                if (trackers.isNotEmpty()) {
+                    item(key = "trackers") {
+                        val following = trackers.count { assessments[it.mac]?.following == true }
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = MaterialTheme.shapes.large,
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (following > 0) MaterialTheme.colorScheme.errorContainer
+                                else MaterialTheme.colorScheme.secondaryContainer
+                            )
+                        ) {
+                            Column(Modifier.padding(12.dp)) {
+                                Text(
+                                    if (following > 0) "🚨 $following traceur(s) vu(s) de façon répétée autour de toi"
+                                    else "🛰️ ${trackers.size} traceur(s) Bluetooth à proximité",
+                                    fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium
+                                )
+                                Text(
+                                    "AirTag, SmartTag, Tile… Un traceur vu à plusieurs lieux ou pendant des heures peut être caché dans tes affaires. " +
+                                        "Les adresses changent toutes les 24 h : la détection couvre la journée.",
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
+                        }
+                    }
+                }
                 items(sorted, key = { it.mac }) { device ->
-                    BtDeviceCard(device)
+                    BtDeviceCard(device, assessments[device.mac])
                 }
             }
         }
@@ -191,7 +225,7 @@ private fun btTypeIcon(type: String): ImageVector = when (type) {
 }
 
 @Composable
-private fun BtDeviceCard(device: BluetoothScanner.BtDevice) {
+private fun BtDeviceCard(device: BluetoothScanner.BtDevice, tracker: BleTrackers.Assessment? = null) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var probing by remember { mutableStateOf(false) }
@@ -238,6 +272,17 @@ private fun BtDeviceCard(device: BluetoothScanner.BtDevice) {
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    if (device.trackerType.isNotBlank()) {
+                        Text(
+                            text = "🛰️ Traceur : ${device.trackerType}" +
+                                (tracker?.takeIf { it.sightings > 0 }?.let { " · ${it.label}" } ?: "") +
+                                (if (tracker?.following == true) " · ⚠️ te suit ?" else ""),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (tracker?.following == true) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.primary
+                        )
+                    }
                     if (device.services.isNotBlank()) {
                         Text(
                             text = device.services,

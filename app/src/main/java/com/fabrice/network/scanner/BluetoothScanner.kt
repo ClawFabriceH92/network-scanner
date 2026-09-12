@@ -35,7 +35,9 @@ object BluetoothScanner {
         val type: String,      // BLE / BR / apparié
         val vendor: String,    // fabricant (OUI MAC ou Company ID BLE)
         val services: String,  // UUID services annoncés, lisibles
-        val txPower: String    // dBm annoncé (ou "")
+        val txPower: String,   // dBm annoncé (ou "")
+        /** Type de traceur BLE (AirTag, SmartTag, Tile…) ou "" — v1.9.37. */
+        val trackerType: String = ""
     )
 
     /** Fabricant par Company ID BLE (16-bit) — les plus courants. */
@@ -106,7 +108,8 @@ object BluetoothScanner {
                 type = type,
                 vendor = vendor,
                 services = bestServices,
-                txPower = bestTx
+                txPower = bestTx,
+                trackerType = existing?.trackerType ?: ""
             )
         }
 
@@ -124,7 +127,18 @@ object BluetoothScanner {
                     var services = ""
                     var tx = ""
                     var companyVendor: String? = null
+                    var tracker = ""
                     record?.let { r ->
+                        // Traceurs (AirTag / SmartTag / Tile / Chipolo / Find My Device)
+                        val mfgMap = HashMap<Int, ByteArray>()
+                        r.manufacturerSpecificData?.let { m ->
+                            for (i in 0 until m.size()) mfgMap[m.keyAt(i)] = m.valueAt(i)
+                        }
+                        val sdata = HashMap<String, ByteArray>()
+                        r.serviceData?.forEach { (k, v) -> sdata[k.toString()] = v }
+                        tracker = BleTrackers.classify(
+                            mfgMap, r.serviceUuids?.map { it.toString() }.orEmpty(), sdata
+                        ) ?: ""
                         // UUID des services annoncés (16-bit → nom lisible)
                         val uuids = r.serviceUuids
                         if (!uuids.isNullOrEmpty()) {
@@ -157,7 +171,8 @@ object BluetoothScanner {
                         type = "BLE",
                         vendor = vendor,
                         services = if (services.isNotBlank()) services else existing?.services ?: "",
-                        txPower = if (tx.isNotBlank()) tx else existing?.txPower ?: ""
+                        txPower = if (tx.isNotBlank()) tx else existing?.txPower ?: "",
+                        trackerType = if (tracker.isNotBlank()) tracker else existing?.trackerType ?: ""
                     )
                 }
             }
@@ -235,7 +250,10 @@ object BluetoothScanner {
             "2A19" -> "Niveau batterie"
             "FEE7" -> "iBeacon"
             "FE9F" -> "Google Eddystone"
-            "FD6F" -> "Tile"
+            "FD6F" -> "Exposure Notification"
+            "FD5A" -> "Samsung SmartTag"
+            "FEED" -> "Tile"
+            "FE33" -> "Chipolo"
             else -> ""
         }
     }

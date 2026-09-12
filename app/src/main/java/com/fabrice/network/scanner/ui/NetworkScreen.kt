@@ -42,6 +42,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.fabrice.network.scanner.NetworkInfoProvider
+import com.fabrice.network.scanner.OutageLog
 import com.fabrice.network.scanner.ProximityIndicator
 import com.fabrice.network.scanner.Traceroute
 import com.fabrice.network.scanner.WifiQuality
@@ -71,6 +72,13 @@ fun NetworkScreen() {
     // Traceroute (à la demande) vers Internet.
     var tracing by remember { mutableStateOf(false) }
     var traceHops by remember { mutableStateOf<List<Traceroute.Hop>>(emptyList()) }
+    // Journal des coupures Internet (v1.9.37).
+    var outageEvents by remember { mutableStateOf<List<OutageLog.Event>>(emptyList()) }
+    var outageTesting by remember { mutableStateOf(false) }
+    var outageNow by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(Unit) {
+        outageEvents = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { OutageLog.load(context) }
+    }
 
     // Récupère l'IP publique (WAN) + GeoIP au chargement, hors thread UI
     LaunchedEffect(Unit) {
@@ -117,6 +125,29 @@ fun NetworkScreen() {
 
         // --- Proximité de la box (tendance RSSI) ---
         ProximityCard(samples = rssiWindow.toList())
+
+        Spacer(Modifier.height(8.dp))
+
+        // --- Disponibilité Internet (journal des coupures) ---
+        OutageCard(
+            events = outageEvents,
+            testing = outageTesting,
+            lastLatency = outageNow,
+            onTest = {
+                scope.launch {
+                    outageTesting = true
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        OutageLog.check(context)
+                        outageNow = OutageLog.probe()
+                        outageEvents = OutageLog.load(context)
+                    }
+                    outageTesting = false
+                }
+            },
+            onClear = {
+                OutageLog.clear(context); outageEvents = emptyList()
+            }
+        )
 
         Spacer(Modifier.height(8.dp))
 
@@ -395,5 +426,66 @@ private fun InfoRow(label: String, value: String, mono: Boolean = false) {
             style = if (mono) LocalMonoTextStyle.current else MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Medium
         )
+    }
+}
+
+
+/** Carte « Disponibilité Internet » : taux sur 30 j + liste des coupures (v1.9.37). */
+@Composable
+private fun OutageCard(
+    events: List<OutageLog.Event>,
+    testing: Boolean,
+    lastLatency: Int?,
+    onTest: () -> Unit,
+    onClear: () -> Unit
+) {
+    val now = System.currentTimeMillis()
+    val since = now - 30L * 24 * 3600_000
+    val availability = remember(events) { OutageLog.availabilityPercent(events, since, now) }
+    val outages = remember(events) { OutageLog.outages(events).filter { (it.endMs ?: now) >= since }.reversed() }
+    val fmt = remember { java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.FRENCH) }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("📶 Disponibilité Internet", style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                TextButton(onClick = onTest, enabled = !testing) { Text(if (testing) "Test…" else "Tester") }
+            }
+            Text(
+                buildString {
+                    if (availability != null) append("${String.format(java.util.Locale.FRENCH, "%.2f", availability)} % sur 30 jours")
+                    else append("Pas encore de mesure")
+                    if (outages.isNotEmpty()) append("  ·  ${outages.size} coupure(s)")
+                    lastLatency?.let { append("  ·  maintenant : $it ms") }
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                "Sondé à chaque scan et à chaque passage de la surveillance (Wi-Fi présent mais Internet muet). " +
+                    "Utile pour documenter une réclamation auprès du FAI.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (outages.isNotEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                outages.take(10).forEach { o ->
+                    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                        Text(
+                            fmt.format(java.util.Date(o.startMs)) + " → " +
+                                (o.endMs?.let { fmt.format(java.util.Date(it)) } ?: "en cours"),
+                            style = LocalMonoTextStyle.current, modifier = Modifier.weight(1f)
+                        )
+                        Text(OutageLog.formatDuration(o.durationMs(now)), style = MaterialTheme.typography.labelSmall,
+                            color = if (o.ongoing) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                TextButton(onClick = onClear) { Text("Effacer le journal") }
+            }
+        }
     }
 }

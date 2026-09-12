@@ -56,6 +56,7 @@ import com.fabrice.network.scanner.ExposureMonitor
 import com.fabrice.network.scanner.IgdProbe
 import com.fabrice.network.scanner.BoxSystem
 import com.fabrice.network.scanner.BoxWifi
+import com.fabrice.network.scanner.DnsHijackTest
 import com.fabrice.network.scanner.FreeboxBoxClient
 import com.fabrice.network.scanner.LiveboxBoxClient
 import com.fabrice.network.scanner.NetworkInfoProvider
@@ -564,6 +565,10 @@ private fun <T> endpointStatus(res: Result<T>): String = when {
 
 @Composable
 private fun DnsCard(dns: List<String>, gateway: String) {
+    val scope = rememberCoroutineScope()
+    var testing by remember { mutableStateOf(false) }
+    var verdict by remember { mutableStateOf<DnsHijackTest.Verdict?>(null) }
+    val context = LocalContext.current
     Card(
         Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
@@ -593,6 +598,28 @@ private fun DnsCard(dns: List<String>, gateway: String) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                }
+            }
+            // Test de détournement DNS (v1.9.37).
+            Spacer(Modifier.height(6.dp))
+            TextButton(onClick = {
+                scope.launch {
+                    testing = true
+                    verdict = withContext(Dispatchers.IO) {
+                        runCatching { DnsHijackTest.evaluate(DnsHijackTest.run(context)) }.getOrNull()
+                    }
+                    testing = false
+                }
+            }, enabled = !testing) { Text(if (testing) "Test en cours…" else "🧪 Tester le détournement DNS") }
+            verdict?.let { v ->
+                Text(
+                    (when (v.level) { 2 -> "🚨 "; 1 -> "⚠️ "; else -> "✅ " }) + v.summary,
+                    style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold,
+                    color = when (v.level) { 2 -> MaterialTheme.colorScheme.error; 1 -> Color(0xFFB26A00); else -> Color(0xFF2E7D32) }
+                )
+                v.details.forEach { d ->
+                    Text(d, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 2.dp))
                 }
             }
         }

@@ -84,6 +84,18 @@ class SurveillanceWorker(context: Context, params: WorkerParameters) :
                 "Scan planifié : ${devices.size} appareil(s) (${devices.count { it.alive }} en ligne)"
             )
 
+            // Coupures Internet (v1.9.37) : le Wi-Fi est là (contrainte UNMETERED)
+            // mais Internet répond-il ? Transition → notification + journal.
+            runCatching { OutageLog.check(ctx) }.getOrNull()?.let { t ->
+                if (t.down) {
+                    NewDeviceNotifier.notifySecurity(ctx, "📴 Internet coupé", "Le Wi-Fi est actif mais aucun serveur public ne répond.", 3003)
+                    auditStore.append("📴 Internet coupé (sonde de surveillance)")
+                } else {
+                    NewDeviceNotifier.notifySecurity(ctx, "✅ Internet rétabli", "Coupure d'environ ${OutageLog.formatDuration(t.outageMs)}.", 3003)
+                    auditStore.append("✅ Internet rétabli après ${OutageLog.formatDuration(t.outageMs)}")
+                }
+            }
+
             // Exposition Internet (v1.9.36) : nouvelle redirection de port (box/UPnP) ?
             runCatching {
                 val box = BoxManager.detect(ctx)

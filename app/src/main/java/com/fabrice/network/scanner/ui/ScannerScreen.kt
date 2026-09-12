@@ -143,6 +143,8 @@ import com.fabrice.network.scanner.ServiceFingerprint
 import com.fabrice.network.scanner.SmbShareScanner
 import com.fabrice.network.scanner.SnmpScanner
 import com.fabrice.network.scanner.TechOptions
+import com.fabrice.network.scanner.TrackerSightingStore
+import com.fabrice.network.scanner.OutageLog
 import com.fabrice.network.scanner.TrustStore
 import com.fabrice.network.scanner.UpdateChecker
 import com.fabrice.network.scanner.VulnScanner
@@ -502,6 +504,13 @@ fun ScannerScreen() {
                     }
                 }
             }
+            // Journal des coupures Internet (v1.9.37) : un échantillon par scan.
+            withContext(Dispatchers.IO) {
+                runCatching { OutageLog.check(context) }.getOrNull()?.let { t ->
+                    if (!t.down) NewDeviceNotifier.notifySecurity(context, "✅ Internet rétabli",
+                        "Coupure d'environ ${OutageLog.formatDuration(t.outageMs)}.", 3003)
+                }
+            }
             // Blocages programmés : applique les fenêtres dues via l'API box
             // (no-op rapide si aucune planification). Non-bloquant pour l'UI.
             val scheduledActions = withContext(Dispatchers.IO) {
@@ -695,6 +704,23 @@ fun ScannerScreen() {
                     BluetoothScanner.scan(ctx, durationMs = 12_000, oui = oui)
                 }
                 btScanning = false
+                // Traceurs BLE (v1.9.37) : mémorise les observations par lieu et
+                // alerte si un traceur inconnu est vu à plusieurs lieux / longtemps.
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        val place = NetworkInfoProvider.read(ctx).let { ProfileStore(ctx).idFor(it) } ?: ""
+                        val following = TrackerSightingStore(ctx).recordScan(btDevices, place)
+                        following.forEach { d ->
+                            NewDeviceNotifier.notifySecurity(
+                                ctx, "🛰️ Traceur Bluetooth qui te suit ?",
+                                "${d.trackerType} (${d.mac}) a été vu à plusieurs reprises autour de toi. " +
+                                    "Vérifie tes affaires (sac, voiture).",
+                                3100 + (d.mac.hashCode() and 0xFF)
+                            )
+                            runCatching { auditStore.append("🛰️ Traceur ${d.trackerType} ${d.mac} vu de façon répétée") }
+                        }
+                    }
+                }
             }
         }
     }
