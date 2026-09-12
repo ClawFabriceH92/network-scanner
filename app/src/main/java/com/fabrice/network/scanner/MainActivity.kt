@@ -10,7 +10,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.fragment.app.FragmentActivity
+import android.content.Intent
 import com.fabrice.network.scanner.ui.AppLockScreen
+import com.fabrice.network.scanner.ui.OnboardingPrefs
+import com.fabrice.network.scanner.ui.OnboardingScreen
 import com.fabrice.network.scanner.ui.ScannerScreen
 import com.fabrice.network.scanner.ui.theme.NetworkScannerTheme
 
@@ -26,18 +29,26 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         UpdateManager.start(this)
+        LaunchActions.consume(intent)   // tuile / widget / notification → scan
         enableEdgeToEdge()
         setContent {
             NetworkScannerTheme {
                 val context = LocalContext.current
                 var unlocked by remember { mutableStateOf(!AppLock.isEnabled(context)) }
-                if (unlocked) {
-                    ScannerScreen()
-                } else {
-                    AppLockScreen(onUnlocked = { unlocked = true })
+                var onboarding by remember { mutableStateOf(!OnboardingPrefs.done(context)) }
+                when {
+                    !unlocked -> AppLockScreen(onUnlocked = { unlocked = true })
+                    onboarding -> OnboardingScreen(onDone = { onboarding = false })
+                    else -> ScannerScreen(onShowOnboarding = { onboarding = true })
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        LaunchActions.consume(intent)
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {

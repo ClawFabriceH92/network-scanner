@@ -119,7 +119,8 @@ fun AboutScreen(
     onCheckUpdate: () -> Unit,
     onDownloadUpdate: () -> Unit,
     onDownloadLatest: () -> Unit = {},
-    onOpenTimeline: () -> Unit = {}
+    onOpenTimeline: () -> Unit = {},
+    onReplayIntro: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val dbVersion = CveDatabaseStore.version(context) ?: "inconnue"
@@ -166,6 +167,9 @@ fun AboutScreen(
             )
         }
         Spacer(Modifier.height(4.dp))
+        androidx.compose.material3.OutlinedButton(onClick = onReplayIntro, modifier = Modifier.fillMaxWidth()) {
+            Text(androidx.compose.ui.res.stringResource(R.string.about_replay_intro))
+        }
         Button(onClick = onOpenTimeline, modifier = Modifier.fillMaxWidth()) {
             Text("🕐 Timeline d'audit")
         }

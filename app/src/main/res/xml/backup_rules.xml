@@ -27,4 +27,9 @@
     <exclude domain="file" path="profiles" />
     <exclude domain="file" path="schedules.json" />
     <exclude domain="file" path="captures" />
+    <exclude domain="sharedpref" path="box_secure_prefs.xml" />
+    <exclude domain="sharedpref" path="box_secure_prefs_fallback.xml" />
+    <exclude domain="sharedpref" path="exposure_prefs.xml" />
+    <exclude domain="file" path="tracker_sightings.json" />
+    <exclude domain="file" path="outage_log.json" />
 </full-backup-content>

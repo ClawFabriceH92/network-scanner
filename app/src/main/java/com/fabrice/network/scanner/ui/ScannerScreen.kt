@@ -144,6 +144,8 @@ import com.fabrice.network.scanner.SmbShareScanner
 import com.fabrice.network.scanner.SnmpScanner
 import com.fabrice.network.scanner.TechOptions
 import com.fabrice.network.scanner.TrackerSightingStore
+import com.fabrice.network.scanner.LaunchActions
+import com.fabrice.network.scanner.ScanWidgetProvider
 import com.fabrice.network.scanner.OutageLog
 import com.fabrice.network.scanner.TrustStore
 import com.fabrice.network.scanner.UpdateChecker
@@ -182,7 +184,7 @@ private sealed interface DeviceListItem {
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun ScannerScreen() {
+fun ScannerScreen(onShowOnboarding: () -> Unit = {}) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -481,6 +483,7 @@ fun ScannerScreen() {
             if (merged.isNotEmpty()) {
                 withContext(Dispatchers.IO) {
                     ScanPersistence.save(context, merged)
+                    ScanWidgetProvider.refresh(context)
                     // Historise les stats des imprimantes trouvées + met à jour le
                     // profil « lieu de connexion » du réseau courant (instantané).
                     val nowMs = System.currentTimeMillis()
@@ -553,8 +556,17 @@ fun ScannerScreen() {
 
     // Au démarrage : détecte un éventuel changement de passerelle depuis la
     // dernière session → reset box + rescan automatique sur le nouveau réseau.
+    // Tuile Quick Settings / widget / notification : scan demandé au lancement.
     LaunchedEffect(Unit) {
-        if (onGatewayChangeDetected()) runScan()
+        if (onGatewayChangeDetected() || LaunchActions.consumeScan()) runScan()
+    }
+    // Re-déclenchement quand l'app est déjà ouverte (onNewIntent) : on sonde le
+    // drapeau à chaque retour au premier plan.
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(500)
+            if (LaunchActions.consumeScan() && !scanning) runScan()
+        }
     }
 
     fun updateCveBase(
@@ -1075,7 +1087,8 @@ fun ScannerScreen() {
                     onCheckUpdate = { checkAppUpdate(silent = false) },
                     onDownloadUpdate = { downloadAppUpdate() },
                     onDownloadLatest = { downloadLatestDirect() },
-                    onOpenTimeline = { screen = 4 }
+                    onOpenTimeline = { screen = 4 },
+                    onReplayIntro = onShowOnboarding
                 )
             } else if (screen == 2) {
                 AboutScreen(

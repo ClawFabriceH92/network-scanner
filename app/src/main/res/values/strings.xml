@@ -1,4 +1,48 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Scan Réseau</string>
+
+    <!-- Tuile Quick Settings / widget (v1.9.38) -->
+    <string name="tile_scan_label">Scanner le réseau</string>
+    <string name="tile_scan_never">Aucun scan</string>
+    <string name="tile_scan_subtitle">%1$d appareils · %2$s</string>
+    <string name="widget_description">Appareils du dernier scan — tap pour rescanner</string>
+    <string name="widget_no_scan">Aucun scan enregistré</string>
+    <string name="widget_tap_to_scan">Touche pour scanner le réseau</string>
+    <string name="widget_devices">%1$d appareils · %2$d en ligne</string>
+    <string name="widget_last_scan">Dernier scan %1$s · touche pour rescanner</string>
+
+    <!-- Notifications avec actions -->
+    <string name="notif_action_trust">Marquer connu</string>
+    <string name="notif_action_block">Bloquer sur la box</string>
+    <string name="notif_trusted">%1$s marqué de confiance</string>
+    <string name="notif_blocked">%1$s bloqué via la box</string>
+    <string name="notif_block_failed">Blocage impossible (box non pilotable ou non autorisée)</string>
+
+    <!-- Introduction -->
+    <string name="onb_welcome_title">Bienvenue dans Scan Réseau</string>
+    <string name="onb_welcome_body">L\'app inventorie ton réseau local et t\'alerte sur ce qui change. Tout reste sur ton téléphone.</string>
+    <string name="onb_feature_scan">🔎 Appareils, ports, fabricants, vulnérabilités connues</string>
+    <string name="onb_feature_alerts">🔔 Alertes : nouvel appareil, usurpation ARP, coupure Internet, redirection de port</string>
+    <string name="onb_feature_wifi">📶 Wi-Fi, Bluetooth, traceurs, box et imprimantes</string>
+    <string name="onb_feature_capture">🟡 Capture réseau façon PCAPdroid, avec pare-feu</string>
+    <string name="onb_feature_local">🔒 Aucun compte, aucune télémétrie</string>
+    <string name="onb_perm_title">Pourquoi ces permissions ?</string>
+    <string name="onb_perm_body">Chaque permission sert une fonction précise. Tu peux refuser : la fonction correspondante sera simplement indisponible.</string>
+    <string name="onb_perm_location">Localisation</string>
+    <string name="onb_perm_location_why">Exigée par Android pour lister les réseaux Wi-Fi et les appareils Bluetooth. Ta position n\'est ni stockée ni envoyée.</string>
+    <string name="onb_perm_notif">Notifications</string>
+    <string name="onb_perm_notif_why">Alertes « nouvel appareil », usurpation ARP, coupure Internet, toner bas.</string>
+    <string name="onb_perm_bt">Bluetooth</string>
+    <string name="onb_perm_bt_why">Scan des périphériques à proximité, services exposés et traceurs (AirTag, SmartTag, Tile).</string>
+    <string name="onb_perm_optional">Optionnelles, demandées plus tard</string>
+    <string name="onb_perm_optional_why">VPN local (capture réseau) et accès aux statistiques d\'utilisation (consommation par app) : demandées uniquement quand tu utilises ces écrans.</string>
+    <string name="onb_done_title">C\'est prêt</string>
+    <string name="onb_done_body">Lance un premier scan depuis l\'écran d\'accueil. Astuce : ajoute la tuile « Scanner le réseau » dans le volet des réglages rapides et le widget sur l\'écran d\'accueil.</string>
+    <string name="onb_allow">Autoriser</string>
+    <string name="onb_next">Suivant</string>
+    <string name="onb_back">Retour</string>
+    <string name="onb_skip">Passer</string>
+    <string name="onb_start">Commencer</string>
+    <string name="about_replay_intro">Revoir l\'introduction</string>
 </resources>

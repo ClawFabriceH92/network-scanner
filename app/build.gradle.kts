@@ -68,8 +68,8 @@ android {
         applicationId = "com.fabrice.network.scanner"
         minSdk = 26
         targetSdk = 35
-        versionCode = 66
-        versionName = "1.9.37"
+        versionCode = 67
+        versionName = "1.9.38"
     }
 
     signingConfigs {
@@ -140,6 +140,8 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.9.1")
     // Verrouillage biométrique (v1.9.0) : BiometricPrompt androidx
     implementation("androidx.biometric:biometric:1.1.0")
+    // Coffre chiffré des secrets box (v1.9.38) : EncryptedSharedPreferences
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")

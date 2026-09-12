@@ -64,14 +64,39 @@ object NewDeviceNotifier {
             context, 0, intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-        val notif = NotificationCompat.Builder(context, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle(buildTitle(newDevices.size))
             .setContentText(buildNotificationText(newDevices))
             .setAutoCancel(true)
             .setContentIntent(pending)
-            .build()
-        runCatching { nm.notify(NOTIFICATION_ID, notif) }
+        if (newDevices.size == 1) addDeviceActions(context, builder, newDevices.first(), NOTIFICATION_ID)
+        runCatching { nm.notify(NOTIFICATION_ID, builder.build()) }
+    }
+
+    /**
+     * Actions « Marquer connu » / « Bloquer sur la box » (v1.9.38) sur la
+     * notification d'un appareil unique. Le blocage n'est proposé que si
+     * l'appareil a une MAC (identifiant exigé par les API box).
+     */
+    fun addDeviceActions(context: Context, builder: NotificationCompat.Builder, device: Device, notifId: Int) {
+        val key = ScanHistory.identityKey(device)
+        val name = device.hostname.ifBlank { device.ip }
+        fun pi(action: String, code: Int): PendingIntent {
+            val i = Intent(context, NotificationActionReceiver::class.java).setAction(action)
+                .putExtra(NotificationActionReceiver.EXTRA_KEY, key)
+                .putExtra(NotificationActionReceiver.EXTRA_MAC, device.mac)
+                .putExtra(NotificationActionReceiver.EXTRA_NAME, name)
+                .putExtra(NotificationActionReceiver.EXTRA_NOTIF_ID, notifId)
+            return PendingIntent.getBroadcast(
+                context, code + (key.hashCode() and 0xFFF), i,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+        }
+        builder.addAction(0, context.getString(R.string.notif_action_trust), pi(NotificationActionReceiver.ACTION_TRUST, 5000))
+        if (device.mac.isNotBlank()) {
+            builder.addAction(0, context.getString(R.string.notif_action_block), pi(NotificationActionReceiver.ACTION_BLOCK, 6000))
+        }
     }
 
     /** Alerte « credential par défaut » (même canal que les nouveaux appareils). */

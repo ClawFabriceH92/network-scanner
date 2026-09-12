@@ -112,16 +112,15 @@ class LiveboxBoxClient(private val context: Context) : BoxClient {
     override val name = "Livebox"
     override val baseUrl = "http://192.168.1.1"
 
-    private fun password(): String? =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(PASSWORD_KEY, null)
+    // Mot de passe admin dans le coffre chiffré (v1.9.38, migré depuis box_prefs).
+    private fun password(): String? = SecurePrefs.get(context).getString(PASSWORD_KEY, null)
 
     /** Le mot de passe device est-il configuré ? (prérequis TR-064) */
     fun isPasswordConfigured(): Boolean = !password().isNullOrBlank()
 
     /** Stocke le mot de passe device (réglages box de l'app). */
     fun setPassword(value: String) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putString(PASSWORD_KEY, value).apply()
+        SecurePrefs.get(context).edit().putString(PASSWORD_KEY, value).apply()
     }
 
     /**

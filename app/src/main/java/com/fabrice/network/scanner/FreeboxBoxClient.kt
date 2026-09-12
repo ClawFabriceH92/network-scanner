@@ -32,7 +32,7 @@ class FreeboxBoxClient(private val context: Context) : BoxClient {
 
         /** Efface tous les tokens d'app (utilisé au changement de passerelle). */
         fun clearTokens(context: Context) {
-            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val prefs = SecurePrefs.get(context)
             val editor = prefs.edit()
             prefs.all.keys.filter { it.startsWith(TOKEN_PREFIX) }.forEach { editor.remove(it) }
             editor.remove("pending_track").remove("pending_token")
@@ -81,9 +81,9 @@ class FreeboxBoxClient(private val context: Context) : BoxClient {
         return base
     }
 
-    private val prefs by lazy {
-        context.getSharedPreferences("box_prefs", Context.MODE_PRIVATE)
-    }
+    // Jetons d'app dans le coffre chiffré (v1.9.38 ; migration automatique
+    // depuis box_prefs en clair).
+    private val prefs by lazy { SecurePrefs.get(context) }
 
     /** Clé du token d'app pour la passerelle courante. */
     private fun tokenKey(): String = TOKEN_PREFIX + NetworkInfoProvider.readGateway()

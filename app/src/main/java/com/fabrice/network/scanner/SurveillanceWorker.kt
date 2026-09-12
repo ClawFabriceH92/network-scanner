@@ -113,7 +113,12 @@ class SurveillanceWorker(context: Context, params: WorkerParameters) :
             val scheduled = runCatching { ScheduleStore.applyDue(ctx) }.getOrDefault(0)
             if (scheduled > 0) AppLog.i("Surveillance", "$scheduled action(s) de blocage programmé")
 
-            if (devices.isNotEmpty()) historyStore.save(devices)
+            if (devices.isNotEmpty()) {
+                historyStore.save(devices)
+                // Le widget relit le dernier scan complet (premier plan) : on ne
+                // remplace PAS l'inventaire par un scan léger sans ports.
+                ScanWidgetProvider.refresh(ctx)
+            }
             AppLog.i("Surveillance", "Scan planifié terminé : ${devices.size} appareil(s)")
             Result.success()
         } catch (e: Exception) {
@@ -143,13 +148,13 @@ class SurveillanceWorker(context: Context, params: WorkerParameters) :
         val title = if (newDevices.size == 1)
             "🆕 Nouvel appareil détecté : ${newDevices.first().hostname.ifBlank { newDevices.first().ip }}"
         else "🆕 ${newDevices.size} nouveaux appareils détectés"
-        val notif = NotificationCompat.Builder(context, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle(title)
             .setContentText(text)
             .setAutoCancel(true)
             .setContentIntent(pending)
-            .build()
-        runCatching { nm.notify(2001, notif) }
+        if (newDevices.size == 1) NewDeviceNotifier.addDeviceActions(context, builder, newDevices.first(), 2001)
+        runCatching { nm.notify(2001, builder.build()) }
     }
 }

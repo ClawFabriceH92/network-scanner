@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Network Scanner</string>
+
+    <string name="tile_scan_label">Scan network</string>
+    <string name="tile_scan_never">No scan yet</string>
+    <string name="tile_scan_subtitle">%1$d devices · %2$s</string>
+    <string name="widget_description">Devices from the last scan — tap to rescan</string>
+    <string name="widget_no_scan">No scan saved</string>
+    <string name="widget_tap_to_scan">Tap to scan the network</string>
+    <string name="widget_devices">%1$d devices · %2$d online</string>
+    <string name="widget_last_scan">Last scan %1$s · tap to rescan</string>
+
+    <string name="notif_action_trust">Mark as known</string>
+    <string name="notif_action_block">Block on router</string>
+    <string name="notif_trusted">%1$s marked as trusted</string>
+    <string name="notif_blocked">%1$s blocked via the router</string>
+    <string name="notif_block_failed">Could not block (router not controllable or not authorised)</string>
+
+    <string name="onb_welcome_title">Welcome to Network Scanner</string>
+    <string name="onb_welcome_body">The app inventories your local network and alerts you when something changes. Everything stays on your phone.</string>
+    <string name="onb_feature_scan">🔎 Devices, ports, vendors, known vulnerabilities</string>
+    <string name="onb_feature_alerts">🔔 Alerts: new device, ARP spoofing, Internet outage, port forwarding</string>
+    <string name="onb_feature_wifi">📶 Wi-Fi, Bluetooth, trackers, router and printers</string>
+    <string name="onb_feature_capture">🟡 PCAPdroid-style traffic capture, with a firewall</string>
+    <string name="onb_feature_local">🔒 No account, no telemetry</string>
+    <string name="onb_perm_title">Why these permissions?</string>
+    <string name="onb_perm_body">Each permission serves one specific feature. You can decline: that feature will simply be unavailable.</string>
+    <string name="onb_perm_location">Location</string>
+    <string name="onb_perm_location_why">Required by Android to list Wi-Fi networks and Bluetooth devices. Your position is never stored or sent.</string>
+    <string name="onb_perm_notif">Notifications</string>
+    <string name="onb_perm_notif_why">Alerts for new devices, ARP spoofing, Internet outages, low toner.</string>
+    <string name="onb_perm_bt">Bluetooth</string>
+    <string name="onb_perm_bt_why">Scan nearby devices, exposed services and trackers (AirTag, SmartTag, Tile).</string>
+    <string name="onb_perm_optional">Optional, asked later</string>
+    <string name="onb_perm_optional_why">Local VPN (traffic capture) and usage-stats access (per-app data): requested only when you open those screens.</string>
+    <string name="onb_done_title">All set</string>
+    <string name="onb_done_body">Run a first scan from the home screen. Tip: add the “Scan network” tile to Quick Settings and the widget to your home screen.</string>
+    <string name="onb_allow">Allow</string>
+    <string name="onb_next">Next</string>
+    <string name="onb_back">Back</string>
+    <string name="onb_skip">Skip</string>
+    <string name="onb_start">Start</string>
+    <string name="about_replay_intro">Replay the introduction</string>
+</resources>

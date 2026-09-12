@@ -54,7 +54,9 @@
 
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -74,6 +76,35 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="network_traffic_capture" />
         </service>
+
+        <!-- Tuile Quick Settings « Scanner le réseau » (v1.9.38) -->
+        <service
+            android:name=".ScanTileService"
+            android:label="@string/tile_scan_label"
+            android:icon="@drawable/ic_network"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- Widget d'écran d'accueil (v1.9.38) -->
+        <receiver
+            android:name=".ScanWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_scan_info" />
+        </receiver>
+
+        <!-- Actions des notifications « nouvel appareil » (v1.9.38) -->
+        <receiver
+            android:name=".NotificationActionReceiver"
+            android:exported="false" />
 
         <!-- Fin de téléchargement de la mise à jour (auto-update GitHub) -->
         <receiver
