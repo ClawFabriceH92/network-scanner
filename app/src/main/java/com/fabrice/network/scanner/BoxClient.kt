@@ -69,6 +69,9 @@ interface BoxClient {
     /** État système : firmware, uptime, température. */
     suspend fun fetchSystem(): BoxSystem? = null
 
+    /** Redirections de ports (NAT) configurées sur la box — v1.9.36. */
+    suspend fun fetchPortForwards(): List<BoxPortForward>? = null
+
     /**
      * Coupe l'accès réseau/Internet d'un périphérique (blocage légal via l'API
      * box, équivalent « bloquer » de l'interface constructeur — PAS de deauth).

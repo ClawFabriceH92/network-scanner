@@ -3192,6 +3192,20 @@ private fun PrinterSection(ip: String, key: String, info: PrinterProbe.PrinterIn
                         )
                         Spacer(Modifier.width(8.dp))
                         Text("$lvl %", style = LocalMonoTextStyle.current)
+                        // Prévision d'épuisement (régression sur l'historique) — v1.9.36.
+                        val fc = remember(history, s) {
+                            PrinterStatsStore.tonerForecast(history, PrinterStatsStore.supplyKey(s))
+                        }
+                        if (fc != null) {
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                if (fc.daysLeft <= 0) "≈ épuisé"
+                                else "≈ ${fc.daysLeft.toInt()} j (${formatDate(fc.emptyAtMs)})",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (fc.daysLeft < 14) MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     } else {
                         Text(
                             "niveau inconnu",
@@ -3205,6 +3219,32 @@ private fun PrinterSection(ip: String, key: String, info: PrinterProbe.PrinterIn
         if (history.size >= 2) {
             PrinterHistoryGraph(history)
         }
+        if (history.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            OutlinedButton(
+                onClick = { exportPrinterCsv(context, history, info.makeAndModel.ifBlank { ip }) },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("📄 Exporter l'historique (CSV)") }
+        }
+    }
+}
+
+/** Export CSV de l'historique d'une imprimante (compteurs + consommables) — v1.9.36. */
+private fun exportPrinterCsv(context: Context, history: List<PrinterStatsStore.Snapshot>, label: String) {
+    runCatching {
+        val dir = File(context.filesDir, "exports").apply { mkdirs() }
+        val safe = label.replace(Regex("[^A-Za-z0-9_.-]"), "_").take(40)
+        val file = File(dir, "imprimante_${safe}_${System.currentTimeMillis()}.csv")
+        file.writeText(PrinterStatsStore.buildCsv(history), Charsets.UTF_8)
+        val uri: Uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/csv"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, "Exporter l'historique imprimante"))
+    }.onFailure {
+        Toast.makeText(context, "Échec de l'export CSV.", Toast.LENGTH_SHORT).show()
     }
 }
 

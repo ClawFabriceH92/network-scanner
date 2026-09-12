@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.location.LocationManager
 import android.net.wifi.WifiManager
 import android.provider.Settings
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -46,10 +47,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.fabrice.network.scanner.PermissionHelper
 import com.fabrice.network.scanner.PublicWifiAnalyzer
+import com.fabrice.network.scanner.WifiChannels
 import com.fabrice.network.scanner.WifiScanner
 import com.fabrice.network.scanner.WifiVulnAnalyzer
 import com.fabrice.network.scanner.ui.theme.LocalMonoTextStyle
@@ -79,6 +83,14 @@ fun WifiScreen() {
     // Analyse « réseau public » (portail captif) du réseau CONNECTÉ
     var publicVuln by remember { mutableStateOf<PublicWifiAnalyzer.PublicWifiVuln?>(null) }
     var publicChecked by remember { mutableStateOf(false) }
+    // BSSID du réseau connecté (pour le conseil de canal) — v1.9.36.
+    val currentBssid = remember {
+        runCatching {
+            (context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager)
+                .connectionInfo?.bssid
+        }.getOrNull()
+    }
+    var showChannels by remember { mutableStateOf(false) }
 
     // lateinit : la lambda est assignée après (évite la forward reference)
     lateinit var runWifiScan: () -> Unit
@@ -260,6 +272,14 @@ fun WifiScreen() {
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                item(key = "channels") {
+                    ChannelOccupancyCard(
+                        networks = networks,
+                        currentBssid = currentBssid,
+                        expanded = showChannels,
+                        onToggle = { showChannels = !showChannels }
+                    )
+                }
                 // Clé unique par position : deux réseaux cachés (BSSID+SSID vides)
                 // ne doivent pas produire la même clé → sinon crash LazyColumn.
                 itemsIndexed(
@@ -461,4 +481,105 @@ private fun InfoRow(label: String, value: String, mono: Boolean = false) {
             style = if (mono) LocalMonoTextStyle.current else MaterialTheme.typography.bodyMedium
         )
     }
+}
+
+
+/**
+ * Occupation des canaux Wi-Fi (v1.9.36) : histogramme 2,4 GHz (1..13) et
+ * 5 GHz, meilleur canal par bande et conseil pour le réseau connecté.
+ */
+@Composable
+private fun ChannelOccupancyCard(
+    networks: List<WifiScanner.WifiNetwork>,
+    currentBssid: String?,
+    expanded: Boolean,
+    onToggle: () -> Unit
+) {
+    val occ24 = remember(networks) { WifiChannels.occupancy24(networks) }
+    val occ5 = remember(networks) { WifiChannels.occupancy5(networks) }
+    val best24 = remember(networks) { WifiChannels.best24(networks) }
+    val best5 = remember(networks) { WifiChannels.best5(networks) }
+    val advice = remember(networks, currentBssid) { WifiChannels.advice(networks, currentBssid) }
+    val myChannel = networks.firstOrNull { it.bssid.equals(currentBssid ?: "", true) }?.channel
+    val n24 = networks.count { WifiChannels.is24(it) }
+    val n5 = networks.count { WifiChannels.is5(it) }
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onToggle),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("📊 Occupation des canaux", style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text(if (expanded) "▲" else "▼", style = MaterialTheme.typography.labelMedium)
+            }
+            Text(
+                buildString {
+                    if (best24 != null && n24 > 0) append("2,4 GHz : meilleur canal ${best24.channel} ($n24 réseaux)")
+                    if (best5 != null && n5 > 0) { if (isNotEmpty()) append("  ·  "); append("5 GHz : canal ${best5.channel} ($n5 réseaux)") }
+                    if (isEmpty()) append("Aucun réseau mesuré.")
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            advice?.let {
+                Spacer(Modifier.height(4.dp))
+                Text("💡 $it", style = MaterialTheme.typography.bodySmall)
+            }
+            if (expanded) {
+                if (n24 > 0) {
+                    Spacer(Modifier.height(8.dp))
+                    Text("2,4 GHz (charge pondérée, chevauchement ±2 canaux)", style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    ChannelBars(occ24.map { Triple(it.channel, it.load, it.networks) }, myChannel, best24?.channel)
+                }
+                if (n5 > 0) {
+                    Spacer(Modifier.height(8.dp))
+                    Text("5 GHz (réseaux par canal)", style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    ChannelBars(occ5.map { Triple(it.channel, it.load, it.networks) }, myChannel, best5?.channel)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChannelBars(items: List<Triple<Int, Double, Int>>, mine: Int?, best: Int?) {
+    val maxLoad = (items.maxOfOrNull { it.second } ?: 1.0).coerceAtLeast(1.0)
+    val barColor = MaterialTheme.colorScheme.primary
+    val mineColor = MaterialTheme.colorScheme.error
+    val bestColor = androidx.compose.ui.graphics.Color(0xFF2E7D32)
+    val grid = MaterialTheme.colorScheme.outlineVariant
+    Canvas(Modifier.fillMaxWidth().height(90.dp)) {
+        val n = items.size
+        if (n == 0) return@Canvas
+        val slot = size.width / n
+        val barW = slot * 0.6f
+        val h = size.height - 16f
+        drawLine(grid, Offset(0f, h), Offset(size.width, h), 1f)
+        items.forEachIndexed { i, (ch, load, _) ->
+            val bh = (load / maxLoad * (h - 4f)).toFloat()
+            val x = i * slot + (slot - barW) / 2
+            val color = when (ch) { mine -> mineColor; best -> bestColor; else -> barColor }
+            drawRect(color, Offset(x, h - bh), Size(barW, bh))
+        }
+    }
+    Row(Modifier.fillMaxWidth()) {
+        items.forEach { (ch, _, _) ->
+            Text(
+                ch.toString(),
+                style = MaterialTheme.typography.labelSmall,
+                color = when (ch) { mine -> mineColor; best -> bestColor; else -> MaterialTheme.colorScheme.onSurfaceVariant },
+                modifier = Modifier.weight(1f),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+        }
+    }
+    Text(
+        "rouge = ta box · vert = meilleur canal",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
 }

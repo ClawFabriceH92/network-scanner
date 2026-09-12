@@ -84,6 +84,19 @@ class SurveillanceWorker(context: Context, params: WorkerParameters) :
                 "Scan planifié : ${devices.size} appareil(s) (${devices.count { it.alive }} en ligne)"
             )
 
+            // Exposition Internet (v1.9.36) : nouvelle redirection de port (box/UPnP) ?
+            runCatching {
+                val box = BoxManager.detect(ctx)
+                val fw = runCatching { box?.fetchPortForwards() }.getOrNull().orEmpty()
+                val upnp = runCatching { IgdProbe.discover(timeoutMs = 2_000) }.getOrNull()
+                    ?.mappings?.map { ExposureMonitor.fromUpnp(it) }.orEmpty()
+                val all = fw + upnp
+                if (all.isNotEmpty() || ExposureMonitor.hasBaseline(ctx)) {
+                    val fresh = ExposureMonitor.checkAndNotify(ctx, all)
+                    if (fresh.isNotEmpty()) AppLog.i("Surveillance", "${fresh.size} nouvelle(s) redirection(s) de port")
+                }
+            }
+
             // Blocages programmés dus → appliquer via l'API box.
             val scheduled = runCatching { ScheduleStore.applyDue(ctx) }.getOrDefault(0)
             if (scheduled > 0) AppLog.i("Surveillance", "$scheduled action(s) de blocage programmé")

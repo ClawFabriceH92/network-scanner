@@ -51,6 +51,9 @@ import com.fabrice.network.scanner.BoxClient
 import com.fabrice.network.scanner.BoxConnection
 import com.fabrice.network.scanner.BoxLease
 import com.fabrice.network.scanner.BoxManager
+import com.fabrice.network.scanner.BoxPortForward
+import com.fabrice.network.scanner.ExposureMonitor
+import com.fabrice.network.scanner.IgdProbe
 import com.fabrice.network.scanner.BoxSystem
 import com.fabrice.network.scanner.BoxWifi
 import com.fabrice.network.scanner.FreeboxBoxClient
@@ -87,6 +90,9 @@ fun BoxScreen() {
     var dnsServers by remember { mutableStateOf<List<String>>(emptyList()) }
     var gateway by remember { mutableStateOf("") }
     var diag by remember { mutableStateOf<BoxDiag?>(null) }
+    // Exposition Internet : redirections box + UPnP, nouvelles depuis la dernière fois.
+    var forwards by remember { mutableStateOf<List<BoxPortForward>?>(null) }
+    var newForwards by remember { mutableStateOf<List<BoxPortForward>>(emptyList()) }
 
     fun fetchAll() {
         scope.launch {
@@ -121,6 +127,24 @@ fun BoxScreen() {
             }
             diag = BoxDiag(gateway = net.gateway, boxName = box?.name, endpoints = endpoints)
             loading = false
+            // Redirections de ports (box + UPnP) en arrière-plan, après le reste.
+            withContext(Dispatchers.IO) {
+                val fRes = runCatching { box?.fetchPortForwards() }
+                val fw = fRes.getOrNull()
+                val upnp = runCatching { IgdProbe.discover(timeoutMs = 2_500) }.getOrNull()
+                val all = fw.orEmpty() + upnp?.mappings.orEmpty().map { ExposureMonitor.fromUpnp(it) }
+                forwards = if (fw == null && upnp == null) null else all
+                newForwards = if (all.isNotEmpty() || ExposureMonitor.hasBaseline(context))
+                    ExposureMonitor.checkAndNotify(context, all) else emptyList()
+                if (box != null) {
+                    endpoints.add("Redirections de ports" to when {
+                        fRes.isFailure -> "erreur"
+                        fw == null -> "non supporté"
+                        else -> "OK (${fw.size})"
+                    })
+                    diag = BoxDiag(gateway = net.gateway, boxName = box.name, endpoints = endpoints.toList())
+                }
+            }
             BoxManager.reset() // force le re-détect si la box a changé
         }
     }
@@ -234,6 +258,9 @@ fun BoxScreen() {
                     )
                 }
             }
+
+            Spacer(Modifier.height(8.dp))
+            PortForwardsCard(forwards, newForwards)
 
             Spacer(Modifier.height(8.dp))
             DiagnosticCard(diag)
@@ -603,6 +630,57 @@ private fun DiagnosticCard(diag: BoxDiag?) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+        }
+    }
+}
+
+/** Carte « Exposition Internet » : redirections de ports box + UPnP (v1.9.36). */
+@Composable
+private fun PortForwardsCard(forwards: List<BoxPortForward>?, fresh: List<BoxPortForward>) {
+    Card(
+        Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text("🔓 Exposition Internet", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            when {
+                forwards == null -> Text(
+                    "Redirections de ports non lisibles (box sans API NAT et pas d'UPnP-IGD).",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                forwards.isEmpty() -> Text(
+                    "✅ Aucune redirection de port : rien n'est exposé depuis Internet.",
+                    style = MaterialTheme.typography.bodySmall, color = Color(0xFF2E7D32)
+                )
+                else -> {
+                    val risky = forwards.count { ExposureMonitor.risk(it) >= 2 }
+                    Text(
+                        "${forwards.size} redirection(s)" + (if (risky > 0) " — $risky service(s) sensible(s) exposé(s)" else "") +
+                            ". Une nouvelle redirection déclenche une alerte.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (risky > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    forwards.sortedByDescending { ExposureMonitor.risk(it) }.forEach { f ->
+                        val isNew = fresh.any { ExposureMonitor.signature(it) == ExposureMonitor.signature(f) }
+                        Column(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                            Text(
+                                (if (isNew) "🆕 " else "") + ExposureMonitor.describe(f),
+                                style = LocalMonoTextStyle.current,
+                                color = if (ExposureMonitor.risk(f) >= 2) MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                "${f.source} · ${ExposureMonitor.riskLabel(f)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
             }
         }
     }

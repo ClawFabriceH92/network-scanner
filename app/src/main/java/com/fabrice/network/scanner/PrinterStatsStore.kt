@@ -160,7 +160,87 @@ class PrinterStatsStore(context: Context) {
             }
         }
 
-        private fun supplyKey(s: PrinterProbe.Supply): String =
+        fun supplyKey(s: PrinterProbe.Supply): String =
             s.name.ifBlank { s.color.ifBlank { s.type } }.lowercase()
+
+        /** Prévision d'épuisement d'un consommable (v1.9.36). */
+        data class Forecast(
+            /** Consommation en points de % par jour (> 0). */
+            val percentPerDay: Double,
+            /** Jours restants estimés avant 0 %. */
+            val daysLeft: Double,
+            /** Date estimée d'épuisement (ms epoch). */
+            val emptyAtMs: Long
+        )
+
+        /**
+         * Estime, par régression linéaire sur les relevés où le niveau BAISSE
+         * (un remplacement de cartouche remet la série à zéro), la vitesse de
+         * consommation d'un consommable et le nombre de jours restants.
+         * null si moins de 2 relevés exploitables, moins de 12 h d'écart, ou
+         * pas de baisse mesurable. Pure → testable.
+         */
+        fun tonerForecast(
+            history: List<Snapshot>,
+            supplyKey: String,
+            nowMs: Long = System.currentTimeMillis()
+        ): Forecast? {
+            val points = history.mapNotNull { snap ->
+                snap.supplies.firstOrNull { supplyKey(it) == supplyKey }?.levelPercent
+                    ?.let { snap.timestamp to it }
+            }
+            if (points.size < 2) return null
+            // Dernier segment monotone décroissant (depuis le dernier remplacement).
+            var startIdx = points.size - 1
+            while (startIdx > 0 && points[startIdx - 1].second >= points[startIdx].second) startIdx--
+            val seg = points.subList(startIdx, points.size)
+            if (seg.size < 2) return null
+            val spanMs = seg.last().first - seg.first().first
+            if (spanMs < 12L * 3600_000) return null
+            // Régression linéaire niveau = a + b·t (t en jours).
+            val t0 = seg.first().first
+            val xs = seg.map { (it.first - t0) / 86_400_000.0 }
+            val ys = seg.map { it.second.toDouble() }
+            val n = xs.size
+            val mx = xs.average(); val my = ys.average()
+            val sxx = xs.sumOf { (it - mx) * (it - mx) }
+            if (sxx == 0.0) return null
+            val b = xs.indices.sumOf { (xs[it] - mx) * (ys[it] - my) } / sxx
+            if (b >= -0.001) return null
+            val rate = -b
+            val current = ys.last()
+            val daysLeft = current / rate
+            val lastTs = seg.last().first
+            val emptyAt = lastTs + (daysLeft * 86_400_000.0).toLong()
+            // Jours restants relatifs à maintenant (peut être < 0 si déjà dépassé).
+            val daysFromNow = (emptyAt - nowMs) / 86_400_000.0
+            return Forecast(rate, daysFromNow, emptyAt)
+        }
+
+        /** Export CSV de l'historique d'une imprimante (séparateur ; + BOM). */
+        fun buildCsv(history: List<Snapshot>): String = buildString {
+            append('\uFEFF')
+            val keys = history.flatMap { it.supplies.map { s -> supplyKey(s) } }.distinct()
+            val labels = keys.map { k ->
+                history.flatMap { it.supplies }.firstOrNull { supplyKey(it) == k }
+                    ?.let { it.name.ifBlank { it.color.ifBlank { it.type } } } ?: k
+            }
+            appendLine((listOf("Date", "Modèle", "État", "Pages", "Numérisations", "Copies") + labels.map { "$it (%)" }).joinToString(";"))
+            val fmt = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", java.util.Locale.FRENCH)
+            history.forEach { s ->
+                val cols = mutableListOf(
+                    fmt.format(java.util.Date(s.timestamp)),
+                    s.makeAndModel.replace(';', ','),
+                    s.state.replace(';', ','),
+                    s.pageCount?.toString() ?: "",
+                    s.scanCount?.toString() ?: "",
+                    s.copyCount?.toString() ?: ""
+                )
+                keys.forEach { k ->
+                    cols.add(s.supplies.firstOrNull { supplyKey(it) == k }?.levelPercent?.toString() ?: "")
+                }
+                appendLine(cols.joinToString(";"))
+            }
+        }
     }
 }

@@ -79,3 +79,16 @@ data class BoxSystem(
     /** Numéro de série, si fourni. */
     val serial: String = ""
 )
+
+/** Redirection de port (NAT) déclarée sur la box ou via UPnP — v1.9.36. */
+data class BoxPortForward(
+    val externalPort: Int,
+    val internalIp: String,
+    val internalPort: Int,
+    /** « tcp » / « udp » / « tcp+udp ». */
+    val protocol: String,
+    val enabled: Boolean = true,
+    val comment: String = "",
+    /** Origine : « Freebox », « UPnP »… */
+    val source: String = ""
+)

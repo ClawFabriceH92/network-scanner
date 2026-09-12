@@ -257,6 +257,40 @@ class FreeboxBoxClient(private val context: Context) : BoxClient {
             out
         }
 
+    /**
+     * Redirections de ports : `GET /fw/redir/` → [{id, enabled, ip_proto,
+     * wan_port_start, wan_port_end, lan_port, lan_ip, comment, hostname}].
+     * Une plage WAN (start..end) est rendue comme une redirection par port de
+     * début (la plage est indiquée dans le commentaire).
+     */
+    override suspend fun fetchPortForwards(): List<BoxPortForward>? =
+        withContext(Dispatchers.IO) {
+            val session = sessionToken() ?: return@withContext null
+            val d = http("GET", "/fw/redir/", token = session) ?: return@withContext null
+            if (!d.optBoolean("success", false)) return@withContext null
+            val arr = d.optJSONArray("result") ?: return@withContext emptyList()
+            val out = mutableListOf<BoxPortForward>()
+            for (i in 0 until arr.length()) {
+                val e = arr.getJSONObject(i)
+                val start = e.optInt("wan_port_start", 0)
+                val end = e.optInt("wan_port_end", start)
+                if (start <= 0) continue
+                val comment = e.optString("comment", "").ifBlank { e.optString("hostname", "") }
+                out.add(
+                    BoxPortForward(
+                        externalPort = start,
+                        internalIp = e.optString("lan_ip", ""),
+                        internalPort = e.optInt("lan_port", start),
+                        protocol = e.optString("ip_proto", "tcp"),
+                        enabled = e.optBoolean("enabled", true),
+                        comment = if (end > start) "$comment [plage $start-$end]".trim() else comment,
+                        source = "Freebox"
+                    )
+                )
+            }
+            out
+        }
+
     override suspend fun fetchConnection(): BoxConnection? =
         withContext(Dispatchers.IO) {
             val session = sessionToken() ?: return@withContext null
