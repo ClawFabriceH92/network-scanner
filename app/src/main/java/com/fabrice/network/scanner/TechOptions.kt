@@ -20,10 +20,13 @@ object TechOptions {
     const val KEY_SCAN_FAST = "scan_fast"
     const val KEY_SCAN_ECONOMY = "scan_economy"
     const val KEY_A11Y_LARGE = "a11y_large"
+    /** Scan Bluetooth lancé en parallèle de chaque scan réseau (v1.9.39). */
+    const val KEY_BT_WITH_SCAN = "bt_with_scan"
 
     const val DEFAULT_SCAN_FAST = true
     const val DEFAULT_SCAN_ECONOMY = false
     const val DEFAULT_A11Y_LARGE = false
+    const val DEFAULT_BT_WITH_SCAN = true
 
     // --- Lecture pure (testable) ---
 
@@ -36,6 +39,9 @@ object TechOptions {
     fun largeTextFrom(prefs: SharedPreferences): Boolean =
         prefs.getBoolean(KEY_A11Y_LARGE, DEFAULT_A11Y_LARGE)
 
+    fun btWithScanFrom(prefs: SharedPreferences): Boolean =
+        prefs.getBoolean(KEY_BT_WITH_SCAN, DEFAULT_BT_WITH_SCAN)
+
     // --- Facades Context (Android) ---
 
     private fun prefs(context: Context) =
@@ -44,6 +50,7 @@ object TechOptions {
     fun scanFast(context: Context): Boolean = scanFastFrom(prefs(context))
     fun scanEconomy(context: Context): Boolean = scanEconomyFrom(prefs(context))
     fun largeText(context: Context): Boolean = largeTextFrom(prefs(context))
+    fun btWithScan(context: Context): Boolean = btWithScanFrom(prefs(context))
 
     fun setScanFast(context: Context, value: Boolean) =
         prefs(context).edit().putBoolean(KEY_SCAN_FAST, value).apply()
@@ -53,6 +60,9 @@ object TechOptions {
 
     fun setLargeText(context: Context, value: Boolean) =
         prefs(context).edit().putBoolean(KEY_A11Y_LARGE, value).apply()
+
+    fun setBtWithScan(context: Context, value: Boolean) =
+        prefs(context).edit().putBoolean(KEY_BT_WITH_SCAN, value).apply()
 
     // --- Lieu de scan : « ne plus demander » mémorisé PAR réseau (id de profil).
     // Quand l'utilisateur coche « Se souvenir pour ce réseau », les scans manuels

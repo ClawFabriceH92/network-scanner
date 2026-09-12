@@ -68,8 +68,8 @@ android {
         applicationId = "com.fabrice.network.scanner"
         minSdk = 26
         targetSdk = 35
-        versionCode = 67
-        versionName = "1.9.38"
+        versionCode = 68
+        versionName = "1.9.39"
     }
 
     signingConfigs {

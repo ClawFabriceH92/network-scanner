@@ -491,6 +491,7 @@ private fun TechOptionsSection() {
     var scanFast by remember { mutableStateOf(TechOptions.scanFast(context)) }
     var economy by remember { mutableStateOf(TechOptions.scanEconomy(context)) }
     var large by remember { mutableStateOf(TechOptions.largeText(context)) }
+    var btWithScan by remember { mutableStateOf(TechOptions.btWithScan(context)) }
 
     Text(
         "⚙️ Options techniques",
@@ -508,6 +509,12 @@ private fun TechOptionsSection() {
         desc = "Réserve SNMP, credentials et partages SMB à l'analyse complète.",
         checked = economy,
         onChange = { TechOptions.setScanEconomy(context, it); economy = it }
+    )
+    ToggleRow(
+        title = "Bluetooth avec le scan réseau",
+        desc = "Lance le scan Bluetooth/BLE (appareils, traceurs) en parallèle de chaque scan réseau.",
+        checked = btWithScan,
+        onChange = { TechOptions.setBtWithScan(context, it); btWithScan = it }
     )
     ToggleRow(
         title = "Accessibilité (grands textes)",

@@ -309,9 +309,33 @@ fun ScannerScreen(onShowOnboarding: () -> Unit = {}) {
 
     // Lance réellement le scan. [placeOverride] = nom de lieu choisi par
     // l'utilisateur pour ce scan (null → nom auto/mémorisé).
+    val btPermissions = remember {
+        arrayOf(
+            Manifest.permission.BLUETOOTH_SCAN,
+            Manifest.permission.BLUETOOTH_CONNECT,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        )
+    }
+    // lateinit : la lambda est assignée plus bas (évite la forward reference) ;
+    // déclarée ici pour que doScan puisse lancer le scan Bluetooth en parallèle.
+    lateinit var runBtScan: (Context) -> Unit
+
+    // Scan Bluetooth EN PARALLÈLE du scan réseau (v1.9.39) : uniquement si
+    // l'option est active, les permissions déjà accordées et le Bluetooth
+    // allumé — jamais de dialogue de permission déclenché par un scan réseau.
+    fun launchBtScanAlongside() {
+        if (!TechOptions.btWithScan(context) || btScanning) return
+        val granted = btPermissions.all {
+            ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+        }
+        if (!granted || !BluetoothScanner.isSupported(context)) return
+        runCatching { runBtScan(context) }
+    }
+
     fun doScan(placeOverride: String?) {
         scanJob = scope.launch {
             scanning = true
+            launchBtScanAlongside()
             error = null
             progress = 0
             progressTotal = 0
@@ -671,15 +695,6 @@ fun ScannerScreen(onShowOnboarding: () -> Unit = {}) {
 
     // Permissions Bluetooth (Android 12+ : BLUETOOTH_SCAN + BLUETOOTH_CONNECT,
     // et ACCESS_FINE_LOCATION pour le BLE sur certains appareils)
-    val btPermissions = remember {
-        arrayOf(
-            Manifest.permission.BLUETOOTH_SCAN,
-            Manifest.permission.BLUETOOTH_CONNECT,
-            Manifest.permission.ACCESS_FINE_LOCATION
-        )
-    }
-    // lateinit : la lambda est assignée après (évite la forward reference)
-    lateinit var runBtScan: (Context) -> Unit
 
     // Demande la localisation au démarrage si absente (nécessaire pour lire le
     // SSID/nom du Wi-Fi sur Android 8.1+ ET pour le scan BLE) — via PermissionHelper.

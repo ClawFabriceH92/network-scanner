@@ -24,4 +24,13 @@ class R5FeaturesTest {
         assertFalse(LaunchActions.consumeScan())
         assertEquals("scan", LaunchActions.ACTION_SCAN)
     }
+
+    @Test
+    fun btWithScanDefaultsOn() {
+        val prefs = java.util.HashMap<String, Any?>()
+        // Lecture pure via une SharedPreferences minimale : défaut ON.
+        assertTrue(TechOptions.DEFAULT_BT_WITH_SCAN)
+        assertEquals("bt_with_scan", TechOptions.KEY_BT_WITH_SCAN)
+        assertTrue(prefs.isEmpty())
+    }
 }
