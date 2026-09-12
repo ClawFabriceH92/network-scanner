@@ -45,6 +45,7 @@ import androidx.core.content.FileProvider
 import com.fabrice.network.scanner.AppLock
 import com.fabrice.network.scanner.AppLog
 import com.fabrice.network.scanner.BuildConfig
+import com.fabrice.network.scanner.R
 import com.fabrice.network.scanner.CveDatabaseStore
 import com.fabrice.network.scanner.CveUpdateManager
 import com.fabrice.network.scanner.NewDeviceNotifier
