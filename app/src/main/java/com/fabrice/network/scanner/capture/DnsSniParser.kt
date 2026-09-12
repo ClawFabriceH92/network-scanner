@@ -53,6 +53,44 @@ object DnsSniParser {
         return out
     }
 
+    /**
+     * Nom demandé par une REQUÊTE DNS (QR=0, première question), ou null.
+     * Sert au pare-feu : une requête vers un domaine bloqué reçoit NXDOMAIN.
+     */
+    fun parseDnsQuestion(data: ByteArray, off: Int, len: Int): String? {
+        return try {
+            if (len < 12) return null
+            val flags = IpPacket.u16(data, off + 2)
+            if ((flags and 0x8000) != 0) return null           // réponse, pas requête
+            if (IpPacket.u16(data, off + 4) == 0) return null  // pas de question
+            readName(data, off + 12, off + len).first.ifBlank { null }
+        } catch (e: Exception) { null }
+    }
+
+    /**
+     * Construit une réponse NXDOMAIN (RCODE 3) à la requête [data[off, off+len)] :
+     * même ID, même question, QR=1, RA=1, aucune réponse. null si la requête
+     * est inexploitable.
+     */
+    fun buildNxDomain(data: ByteArray, off: Int, len: Int): ByteArray? {
+        return try {
+            if (len < 12) return null
+            val qEnd = readName(data, off + 12, off + len).second + 4
+            if (qEnd > off + len) return null
+            val out = ByteArray(qEnd - off)
+            System.arraycopy(data, off, out, 0, out.size)
+            val flags = IpPacket.u16(data, off + 2)
+            // QR=1, opcode conservé, AA=0, TC=0, RD conservé, RA=1, RCODE=3
+            val f = 0x8000 or (flags and 0x7900) or 0x0080 or 3
+            IpPacket.put16(out, 2, f)
+            IpPacket.put16(out, 4, 1)   // QDCOUNT
+            IpPacket.put16(out, 6, 0)   // ANCOUNT
+            IpPacket.put16(out, 8, 0)   // NSCOUNT
+            IpPacket.put16(out, 10, 0)  // ARCOUNT
+            out
+        } catch (e: Exception) { null }
+    }
+
     /** Lit un nom DNS (avec compression) → (nom, offset suivant hors saut). */
     private fun readName(data: ByteArray, start: Int, len: Int): Pair<String, Int> {
         val sb = StringBuilder()

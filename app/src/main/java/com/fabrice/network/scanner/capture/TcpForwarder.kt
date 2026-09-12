@@ -165,9 +165,15 @@ class TcpForwarder(private val bridge: TunBridge) {
 
     private fun key(appPort: Int, serverIp: String, serverPort: Int) = "$appPort>$serverIp:$serverPort"
 
-    /** Traite un paquet IPv4/TCP sortant. */
+    /** Ferme (sans RST) la connexion suivie pour ce 3-uplet, si elle existe. */
+    fun drop(appPort: Int, serverIp: String, serverPort: Int) {
+        conns[key(appPort, serverIp, serverPort)]?.close()
+    }
+
+    /** Traite un paquet IP/TCP sortant (v4 ou v6). */
     fun handleOutbound(pkt: ByteArray) {
-        val ipHdr = IpPacket.ihl(pkt)
+        val ipHdr = IpPacket.l4Offset(pkt)
+        if (ipHdr < 0) return
         val appIp = IpPacket.srcIp(pkt)
         val serverIp = IpPacket.dstIp(pkt)
         val appPort = IpPacket.u16(pkt, ipHdr)
@@ -175,7 +181,7 @@ class TcpForwarder(private val bridge: TunBridge) {
         val seq = IpPacket.u32(pkt, ipHdr + 4)
         val dataOff = ((IpPacket.u8(pkt, ipHdr + 12) ushr 4) and 0x0F) * 4
         val flags = IpPacket.u8(pkt, ipHdr + 13)
-        val total = IpPacket.totalLength(pkt)
+        val total = IpPacket.packetEnd(pkt)
         val payloadOff = ipHdr + dataOff
         val payloadLen = (total - payloadOff).coerceAtLeast(0)
 
@@ -223,8 +229,15 @@ class TcpForwarder(private val bridge: TunBridge) {
 
         // --- SNI TLS (nom d'hôte lisible dans le ClientHello) -------------
         if (payloadLen > 5 && IpPacket.u8(pkt, payloadOff) == 0x16) {
-            DnsSniParser.parseSni(pkt, payloadOff, payloadLen)?.let {
-                CaptureState.setHostname("TCP", appPort, serverIp, serverPort, it)
+            DnsSniParser.parseSni(pkt, payloadOff, payloadLen)?.let { sni ->
+                CaptureState.setHostname("TCP", appPort, serverIp, serverPort, sni)
+                // Pare-feu par domaine : le SNI révèle le site → RST immédiat.
+                FirewallRuntime.domainBlockReason(sni)?.let { reason ->
+                    CaptureState.onBlocked("TCP", appPort, serverIp, serverPort,
+                        System.currentTimeMillis(), -1, "", reason)
+                    c.reset()
+                    return
+                }
             }
         }
 

@@ -41,6 +41,31 @@ object CsvExporter {
         }
     }
 
+    /** Export des connexions de la capture réseau (v1.9.34). */
+    fun buildConnectionsCsv(conns: List<com.fabrice.network.scanner.capture.CaptureState.Conn>): String = buildString {
+        append('\uFEFF')
+        appendLine("Protocole;Hôte;IP distante;Port distant;Port local;Application;Classification;Localisation;Statut;Motif blocage;Octets émis;Octets reçus;Paquets;Première vue;Dernière vue")
+        val fmt = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm:ss", java.util.Locale.FRENCH)
+        conns.forEach { c ->
+            append(csv(c.protocol)); append(';')
+            append(csv(c.hostname)); append(';')
+            append(csv(c.remoteIp)); append(';')
+            append(c.remotePort); append(';')
+            append(c.localPort); append(';')
+            append(csv(c.appLabel)); append(';')
+            append(csv(c.category)); append(';')
+            append(csv(c.geo)); append(';')
+            append(csv(c.status)); append(';')
+            append(csv(c.blockReason)); append(';')
+            append(c.bytesOut); append(';')
+            append(c.bytesIn); append(';')
+            append(c.packetsOut + c.packetsIn); append(';')
+            append(fmt.format(java.util.Date(c.firstSeenMs))); append(';')
+            append(fmt.format(java.util.Date(c.lastSeenMs)))
+            appendLine()
+        }
+    }
+
     /**
      * Échappe un champ CSV. Neutralise d'abord l'injection de formule (un champ
      * réseau non fiable — hostname, SNMP, fabricant — commençant par = + - @ est

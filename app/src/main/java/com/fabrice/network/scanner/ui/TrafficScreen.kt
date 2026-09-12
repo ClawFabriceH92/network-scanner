@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.VpnService
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,7 +17,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -47,9 +52,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import com.fabrice.network.scanner.CsvExporter
 import com.fabrice.network.scanner.capture.AppTrafficMonitor
+import com.fabrice.network.scanner.capture.CapturePrefs
 import com.fabrice.network.scanner.capture.CaptureState
 import com.fabrice.network.scanner.capture.CaptureVpnService
+import com.fabrice.network.scanner.capture.FirewallRules
+import com.fabrice.network.scanner.capture.GeoCache
+import com.fabrice.network.scanner.capture.TrackerDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -76,6 +86,37 @@ fun TrafficScreen(onBack: () -> Unit) {
     val packetCount by CaptureState.packetCount.collectAsState()
     val captureError by CaptureState.error.collectAsState()
     val notice by CaptureState.notice.collectAsState()
+    val blockedCount by CaptureState.blockedCount.collectAsState()
+
+    // ---- Pare-feu / options (v1.9.34) --------------------------------------
+    var rules by remember { mutableStateOf(FirewallRules.load(context)) }
+    var blockTrackers by remember { mutableStateOf(FirewallRules.blockTrackers(context)) }
+    var allowedPkgs by remember { mutableStateOf(CapturePrefs.allowedPackages(context)) }
+    var ipv6 by remember { mutableStateOf(CapturePrefs.ipv6(context)) }
+    var geo by remember { mutableStateOf(CapturePrefs.geo(context)) }
+    var domainDraft by remember { mutableStateOf("") }
+    var pickForRules by remember { mutableStateOf(false) }
+    var pickForFilter by remember { mutableStateOf(false) }
+    var selectedConn by remember { mutableStateOf<CaptureState.Conn?>(null) }
+    var trackerInfo by remember { mutableStateOf("") }
+
+    fun saveRules(newRules: List<FirewallRules.Rule>) {
+        rules = newRules.distinct()
+        FirewallRules.save(context, rules)
+    }
+
+    // Liste de trackers : rafraîchissement silencieux (24 h), comme la base CVE.
+    LaunchedEffect(Unit) {
+        val db = withContext(Dispatchers.IO) {
+            val now = System.currentTimeMillis()
+            val fresh = if (now - CapturePrefs.trackerLastAuto(context) > 24L * 3600_000) {
+                CapturePrefs.setTrackerLastAuto(context, now)
+                TrackerDatabase.update(context)
+            } else null
+            fresh ?: TrackerDatabase.load(context)
+        }
+        trackerInfo = if (db.count > 0) "${db.count} domaines (liste du ${db.generated})" else "liste indisponible"
+    }
 
     // Consentement VPN (dialogue système). Sur RESULT_OK → on démarre le service.
     val vpnLauncher = rememberLauncherForActivityResult(
@@ -131,6 +172,66 @@ fun TrafficScreen(onBack: () -> Unit) {
     }
 
     LaunchedEffect(period) { refreshUsage() }
+
+    if (pickForRules) {
+        AppPickerDialog(
+            title = "Bloquer des applications",
+            preselected = rules.filter { it.isApp }.map { it.value }.toSet(),
+            onDismiss = { pickForRules = false },
+            onConfirm = { chosen ->
+                pickForRules = false
+                val keep = rules.filter { !it.isApp }
+                saveRules(keep + chosen.map { FirewallRules.Rule(FirewallRules.KIND_APP, it.pkg, it.label) })
+            }
+        )
+    }
+    if (pickForFilter) {
+        AppPickerDialog(
+            title = "Applications à capturer (aucune = toutes)",
+            preselected = allowedPkgs,
+            onDismiss = { pickForFilter = false },
+            onConfirm = { chosen ->
+                pickForFilter = false
+                allowedPkgs = chosen.map { it.pkg }.toSet()
+                CapturePrefs.setAllowedPackages(context, allowedPkgs)
+            }
+        )
+    }
+    selectedConn?.let { c ->
+        val host = c.hostname
+        val pkgs = remember(c.uid) { packagesForUid(context, c.uid) }
+        AlertDialog(
+            onDismissRequest = { selectedConn = null },
+            title = { Text(host.ifBlank { c.remoteIp }) },
+            text = {
+                Column {
+                    Text("${c.protocol} ${c.remoteIp}:${c.remotePort}  ·  port local ${c.localPort}")
+                    Text("Application : ${c.appLabel.ifBlank { "inconnue" }}")
+                    if (c.category.isNotBlank()) Text("Classification : ${c.category}")
+                    if (c.geo.isNotBlank()) Text("Localisation : ${c.geo}")
+                    if (c.blocked) Text("⛔ Bloquée (${c.blockReason})")
+                    Text("↑ ${AppTrafficMonitor.formatBytes(c.bytesOut)}  ↓ ${AppTrafficMonitor.formatBytes(c.bytesIn)}  ·  ${c.packetsOut + c.packetsIn} paquets")
+                }
+            },
+            confirmButton = {
+                Column {
+                    if (host.isNotBlank()) {
+                        TextButton(onClick = {
+                            saveRules(rules + FirewallRules.Rule(FirewallRules.KIND_DOMAIN, FirewallRules.normalizeDomain(host)))
+                            selectedConn = null
+                        }) { Text("Bloquer le domaine") }
+                    }
+                    if (pkgs.isNotEmpty()) {
+                        TextButton(onClick = {
+                            saveRules(rules + pkgs.map { FirewallRules.Rule(FirewallRules.KIND_APP, it, c.appLabel) })
+                            selectedConn = null
+                        }) { Text("Bloquer l'app ${c.appLabel}") }
+                    }
+                }
+            },
+            dismissButton = { TextButton(onClick = { selectedConn = null }) { Text("Fermer") } }
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -192,6 +293,125 @@ fun TrafficScreen(onBack: () -> Unit) {
                 }
             }
 
+            // ---- Pare-feu ---------------------------------------------------
+            item {
+                Card {
+                    Column(Modifier.padding(14.dp)) {
+                        Text("🛡️ Pare-feu (pendant la capture)", fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Bloque des applications ou des domaines tant que la capture tourne : " +
+                            "RST TCP, réponse DNS « inexistant », UDP jeté. " +
+                            if (blockedCount > 0) "$blockedCount paquet(s) bloqué(s)." else "",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Bloquer les trackers / publicité", style = MaterialTheme.typography.bodyMedium)
+                                Text(trackerInfo.ifBlank { "chargement…" }, style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(checked = blockTrackers, onCheckedChange = {
+                                blockTrackers = it; FirewallRules.setBlockTrackers(context, it)
+                            })
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(
+                                value = domainDraft, onValueChange = { domainDraft = it },
+                                label = { Text("Domaine à bloquer") }, singleLine = true,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(onClick = {
+                                val d = FirewallRules.normalizeDomain(domainDraft)
+                                if (d.isNotBlank()) {
+                                    saveRules(rules + FirewallRules.Rule(FirewallRules.KIND_DOMAIN, d))
+                                    domainDraft = ""
+                                }
+                            }) { Text("Ajouter") }
+                        }
+                        OutlinedButton(onClick = { pickForRules = true }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Bloquer une application…")
+                        }
+                        if (rules.isNotEmpty()) {
+                            Spacer(Modifier.height(6.dp))
+                            rules.forEach { r ->
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        (if (r.isApp) "📱 " else "🌐 ") + r.label.ifBlank { r.value },
+                                        modifier = Modifier.weight(1f),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                    )
+                                    TextButton(onClick = { saveRules(rules - r) }) { Text("Retirer") }
+                                }
+                            }
+                        }
+                        if (running) {
+                            Text("Les règles s'appliquent immédiatement à la capture en cours.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+
+            // ---- Options de capture ----------------------------------------
+            item {
+                Card {
+                    Column(Modifier.padding(14.dp)) {
+                        Text("⚙️ Options de capture", fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(6.dp))
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Applications capturées", style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    if (allowedPkgs.isEmpty()) "Toutes les applications"
+                                    else "${allowedPkgs.size} application(s) sélectionnée(s)",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            TextButton(onClick = { pickForFilter = true }) { Text("Choisir") }
+                        }
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Capturer l'IPv6", style = MaterialTheme.typography.bodyMedium)
+                                Text("Actif seulement si le réseau a une IPv6 globale.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(checked = ipv6, onCheckedChange = { ipv6 = it; CapturePrefs.setIpv6(context, it) })
+                        }
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Pays / opérateur des IP distantes", style = MaterialTheme.typography.bodyMedium)
+                                Text("Envoie chaque IP publique contactée à ipinfo.io (opt-in).",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(checked = geo, onCheckedChange = {
+                                geo = it; CapturePrefs.setGeo(context, it); CaptureState.geoEnabled = it
+                            })
+                        }
+                        if (running && (allowedPkgs.isNotEmpty() || !ipv6)) {
+                            Text("Filtre d'apps et IPv6 : pris en compte au prochain démarrage de la capture.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+
             // ---- Captures enregistrées ------------------------------------
             if (savedCaptures.isNotEmpty()) {
                 item {
@@ -213,10 +433,26 @@ fun TrafficScreen(onBack: () -> Unit) {
             // ---- Connexions en direct -------------------------------------
             if (connections.isNotEmpty()) {
                 item {
-                    Text("Connexions (${connections.size})", fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.titleSmall)
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Connexions (${connections.size})", fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleSmall)
+                        TextButton(onClick = { exportConnectionsCsv(context, connections) }) { Text("Export CSV") }
+                    }
+                    val trackers = connections.count { it.category.isNotBlank() }
+                    val blocked = connections.count { it.blocked }
+                    val countries = if (geo) GeoCache.countries(connections.map { it.remoteIp }) else emptyList()
+                    val summary = buildList {
+                        if (trackers > 0) add("$trackers tracker(s)")
+                        if (blocked > 0) add("$blocked bloquée(s)")
+                        if (countries.isNotEmpty()) add("pays : " + countries.joinToString(" ") { GeoCache.flag(it) + it })
+                    }
+                    if (summary.isNotEmpty()) {
+                        Text(summary.joinToString("  ·  "), style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
-                items(connections) { c -> ConnRow(c) }
+                items(connections) { c -> ConnRow(c, onClick = { selectedConn = c }) }
             }
 
             item { HorizontalDivider(Modifier.padding(vertical = 4.dp)) }
@@ -288,8 +524,8 @@ private fun StatCell(label: String, value: String) {
 }
 
 @Composable
-private fun ConnRow(c: CaptureState.Conn) {
-    Card {
+private fun ConnRow(c: CaptureState.Conn, onClick: () -> Unit) {
+    Card(modifier = Modifier.clickable(onClick = onClick)) {
         Column(Modifier.fillMaxWidth().padding(10.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(
@@ -302,9 +538,21 @@ private fun ConnRow(c: CaptureState.Conn) {
                     modifier = Modifier.weight(1f, fill = false)
                 )
                 Text(
-                    if (c.status == "actif") "● actif" else "○ fermé",
+                    when (c.status) { "actif" -> "● actif"; "bloqué" -> "⛔ bloqué"; else -> "○ fermé" },
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (c.status == "actif") Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant
+                    color = when (c.status) {
+                        "actif" -> Color(0xFF2E7D32)
+                        "bloqué" -> MaterialTheme.colorScheme.error
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                )
+            }
+            if (c.category.isNotBlank() || c.geo.isNotBlank()) {
+                Text(
+                    listOf(if (c.category.isNotBlank()) "🎯 ${c.category}" else "", c.geo)
+                        .filter { it.isNotBlank() }.joinToString("  ·  "),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (c.category.isNotBlank()) Color(0xFFB26A00) else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             if (c.hostname.isNotBlank()) {
@@ -398,5 +646,92 @@ private fun sharePcap(context: Context, path: String) {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         context.startActivity(Intent.createChooser(intent, "Exporter la capture .pcap"))
+    }
+}
+
+
+/** Une application installée (lançable) pour les sélecteurs. */
+data class InstalledApp(val pkg: String, val label: String)
+
+/** Applications avec une activité de lancement (visibles via <queries> du manifest). */
+private fun listLaunchableApps(context: Context): List<InstalledApp> = runCatching {
+    val pm = context.packageManager
+    val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+    pm.queryIntentActivities(intent, 0)
+        .map { InstalledApp(it.activityInfo.packageName, it.loadLabel(pm).toString()) }
+        .filter { it.pkg != context.packageName }
+        .distinctBy { it.pkg }
+        .sortedBy { it.label.lowercase() }
+}.getOrDefault(emptyList())
+
+private fun packagesForUid(context: Context, uid: Int): List<String> =
+    if (uid <= 0) emptyList()
+    else runCatching { context.packageManager.getPackagesForUid(uid)?.toList() }.getOrNull().orEmpty()
+
+@Composable
+private fun AppPickerDialog(
+    title: String,
+    preselected: Set<String>,
+    onDismiss: () -> Unit,
+    onConfirm: (List<InstalledApp>) -> Unit
+) {
+    val context = LocalContext.current
+    var apps by remember { mutableStateOf<List<InstalledApp>>(emptyList()) }
+    var query by remember { mutableStateOf("") }
+    val selected = remember { mutableStateOf(preselected) }
+    LaunchedEffect(Unit) { apps = withContext(Dispatchers.IO) { listLaunchableApps(context) } }
+    val shown = apps.filter { query.isBlank() || it.label.contains(query, true) || it.pkg.contains(query, true) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column {
+                OutlinedTextField(value = query, onValueChange = { query = it }, singleLine = true,
+                    label = { Text("Rechercher") }, modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(6.dp))
+                if (apps.isEmpty()) Text("Chargement…", style = MaterialTheme.typography.bodySmall)
+                LazyColumn(Modifier.height(320.dp)) {
+                    items(shown, key = { it.pkg }) { a ->
+                        val checked = a.pkg in selected.value
+                        Row(
+                            Modifier.fillMaxWidth().clickable {
+                                selected.value = if (checked) selected.value - a.pkg else selected.value + a.pkg
+                            },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(checked = checked, onCheckedChange = null)
+                            Column(Modifier.weight(1f)) {
+                                Text(a.label, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                                Text(a.pkg, style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val byPkg = apps.associateBy { it.pkg }
+                onConfirm(selected.value.map { byPkg[it] ?: InstalledApp(it, it) })
+            }) { Text("Valider") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Annuler") } }
+    )
+}
+
+/** Export CSV des connexions capturées (séparateur ; + BOM, comme le scan). */
+private fun exportConnectionsCsv(context: Context, conns: List<CaptureState.Conn>) {
+    runCatching {
+        val dir = File(context.filesDir, "exports").apply { mkdirs() }
+        val file = File(dir, "capture_connexions_${System.currentTimeMillis()}.csv")
+        file.writeText(CsvExporter.buildConnectionsCsv(conns), Charsets.UTF_8)
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/csv"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, "Exporter les connexions"))
     }
 }

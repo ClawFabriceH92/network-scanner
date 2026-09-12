@@ -20,6 +20,7 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.net.DatagramSocket
 import java.net.Inet4Address
+import java.net.Inet6Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -34,7 +35,9 @@ import java.util.concurrent.ConcurrentHashMap
  * La capture est explicitement démarrée/arrêtée par l'utilisateur (comme
  * PCAPdroid) : couper la capture rétablit immédiatement le routage normal.
  *
- * Portée : IPv4 uniquement (l'IPv6 n'est pas routé → non capturé mais intact).
+ * v1.9.34 : IPv6 (si le réseau réel a une IPv6 globale), filtre par application
+ * (addAllowedApplication), pare-feu (app / domaine / trackers → RST, drop ou
+ * NXDOMAIN synthétique), classification trackers et GeoIP opt-in.
  */
 class CaptureVpnService : VpnService(), TunBridge {
 
@@ -44,6 +47,7 @@ class CaptureVpnService : VpnService(), TunBridge {
         private const val CHANNEL_ID = "capture_vpn"
         private const val NOTIF_ID = 4242
         private const val TUN_ADDR = "10.111.222.1"
+        private const val TUN_ADDR6 = "fd00:6e65:7473:6361::1"
         private const val MTU = 1500
         // Garde-fous : arrêt automatique de la capture pour éviter le drain
         // batterie et la saturation du stockage si l'utilisateur oublie de couper.
@@ -88,13 +92,29 @@ class CaptureVpnService : VpnService(), TunBridge {
             .setSession("Capture réseau")
             .setMtu(MTU)
             .addAddress(TUN_ADDR, 32)
-            .addRoute("0.0.0.0", 0)          // IPv4 uniquement
-        // DNS : réutilise les serveurs DNS du réseau réel (IPv4) au lieu de forcer
+            .addRoute("0.0.0.0", 0)
+        // IPv6 : uniquement si le réseau réel a une adresse globale (sinon les
+        // apps tenteraient l'IPv6 en premier et attendraient un RST à chaque fois).
+        val v6 = CapturePrefs.ipv6(this) && hasGlobalIpv6()
+        if (v6) {
+            runCatching { builder.addAddress(TUN_ADDR6, 128); builder.addRoute("::", 0) }
+        }
+        // DNS : réutilise les serveurs DNS du réseau réel au lieu de forcer
         // 8.8.8.8 — préserve la résolution des noms locaux (mafreebox.freebox.fr,
         // *.local, box) et évite de détourner tout le DNS vers Google.
-        addLinkDnsServers(builder)
-        // Ne pas capturer notre propre app (évite tout risque de boucle).
-        runCatching { builder.addDisallowedApplication(packageName) }
+        addLinkDnsServers(builder, v6)
+        // Filtre par application (vide = toutes). addAllowed et addDisallowed
+        // sont exclusifs : sans filtre, on exclut seulement notre propre app.
+        var allowedAdded = 0
+        CapturePrefs.allowedPackages(this).filter { it != packageName }.forEach { pkg ->
+            runCatching { builder.addAllowedApplication(pkg); allowedAdded++ }
+        }
+        if (allowedAdded == 0) runCatching { builder.addDisallowedApplication(packageName) }
+        // Pare-feu + classification trackers + GeoIP (opt-in).
+        FirewallRuntime.apply(this)
+        val trackers = TrackerDatabase.load(this)
+        CaptureState.trackerLookup = { h -> trackers.lookup(h)?.label }
+        CaptureState.geoEnabled = CapturePrefs.geo(this)
 
         val fd = try {
             builder.establish()
@@ -143,29 +163,44 @@ class CaptureVpnService : VpnService(), TunBridge {
             if (n <= 0) {
                 if (n < 0) break else continue
             }
-            if (IpPacket.version(buf) != 4) continue    // IPv6/autres : ignorés
-            val proto = IpPacket.protocol(buf)
+            val ver = IpPacket.version(buf)
+            if (ver != 4 && ver != 6) continue
+            val l4 = IpPacket.l4Offset(buf)
+            if (l4 < 0) continue                              // extension v6 / autre
+            val proto = IpPacket.l4Protocol(buf)
             if (proto != IpPacket.PROTO_TCP && proto != IpPacket.PROTO_UDP) continue
 
             val now = System.currentTimeMillis()
             pcap?.write(buf, n, now)
 
-            val ipHdr = IpPacket.ihl(buf)
             val appIp = IpPacket.srcIp(buf)
             val serverIp = IpPacket.dstIp(buf)
-            val appPort = IpPacket.u16(buf, ipHdr)
-            val serverPort = IpPacket.u16(buf, ipHdr + 2)
+            val appPort = IpPacket.u16(buf, l4)
+            val serverPort = IpPacket.u16(buf, l4 + 2)
             val protoName = if (proto == IpPacket.PROTO_TCP) "TCP" else "UDP"
 
             // Longueur de payload L4 pour la comptabilité.
-            val payloadLen = if (proto == IpPacket.PROTO_UDP) {
-                (IpPacket.u16(buf, ipHdr + 4) - 8).coerceAtLeast(0)
+            val payloadOff: Int
+            val payloadLen: Int
+            if (proto == IpPacket.PROTO_UDP) {
+                payloadOff = l4 + 8
+                payloadLen = (IpPacket.u16(buf, l4 + 4) - 8).coerceAtLeast(0)
             } else {
-                val dataOff = ((IpPacket.u8(buf, ipHdr + 12) ushr 4) and 0x0F) * 4
-                (IpPacket.totalLength(buf) - ipHdr - dataOff).coerceAtLeast(0)
+                val dataOff = ((IpPacket.u8(buf, l4 + 12) ushr 4) and 0x0F) * 4
+                payloadOff = l4 + dataOff
+                payloadLen = (IpPacket.packetEnd(buf) - payloadOff).coerceAtLeast(0)
             }
 
             val uid = resolveUid(proto, appIp, appPort, serverIp, serverPort)
+
+            // ---- Pare-feu ---------------------------------------------------
+            val reason = firewallReason(uid, proto, serverIp, serverPort, buf, payloadOff, payloadLen)
+            if (reason != null) {
+                CaptureState.onBlocked(protoName, appPort, serverIp, serverPort, now, uid, labelFor(uid), reason)
+                blockPacket(proto, buf, l4, appIp, appPort, serverIp, serverPort, payloadOff, payloadLen)
+                continue
+            }
+
             CaptureState.onOutbound(protoName, appPort, serverIp, serverPort, payloadLen, now, uid, labelFor(uid))
 
             try {
@@ -175,6 +210,53 @@ class CaptureVpnService : VpnService(), TunBridge {
             }
         }
         stopCapture()
+    }
+
+    /**
+     * Motif de blocage d'un paquet sortant, ou null s'il passe :
+     *  - uid de l'app dans les règles « app » ;
+     *  - requête DNS vers un domaine bloqué / tracker (→ NXDOMAIN synthétique) ;
+     *  - IP distante déjà associée (sniff DNS) à un domaine bloqué.
+     */
+    private fun firewallReason(
+        uid: Int, proto: Int, serverIp: String, serverPort: Int,
+        pkt: ByteArray, payloadOff: Int, payloadLen: Int
+    ): String? {
+        if (FirewallRuntime.isUidBlocked(uid)) return "app"
+        if (proto == IpPacket.PROTO_UDP && serverPort == 53 && payloadLen > 12) {
+            val q = DnsSniParser.parseDnsQuestion(pkt, payloadOff, payloadLen)
+            if (q != null) FirewallRuntime.domainBlockReason(q)?.let { return "DNS $it" }
+        }
+        CaptureState.hostFor(serverIp)?.let { host ->
+            FirewallRuntime.domainBlockReason(host)?.let { return it }
+        }
+        return null
+    }
+
+    /** Applique le blocage : RST (TCP), NXDOMAIN (DNS) ou simple abandon (UDP). */
+    private fun blockPacket(
+        proto: Int, pkt: ByteArray, l4: Int, appIp: String, appPort: Int,
+        serverIp: String, serverPort: Int, payloadOff: Int, payloadLen: Int
+    ) {
+        if (proto == IpPacket.PROTO_TCP) {
+            val seq = IpPacket.u32(pkt, l4 + 4)
+            val flags = IpPacket.u8(pkt, l4 + 13)
+            if (flags and IpPacket.RST != 0) { tcp.drop(appPort, serverIp, serverPort); return }
+            var ack = seq + payloadLen
+            if (flags and IpPacket.SYN != 0) ack += 1
+            if (flags and IpPacket.FIN != 0) ack += 1
+            val rst = IpPacket.buildTcp(
+                serverIp, serverPort, appIp, appPort,
+                0L, ack and 0xFFFFFFFFL, IpPacket.RST or IpPacket.ACK, 0, null, 0, 0
+            )
+            emit(rst, rst.size)
+            tcp.drop(appPort, serverIp, serverPort)
+        } else if (serverPort == 53) {
+            val nx = DnsSniParser.buildNxDomain(pkt, payloadOff, payloadLen) ?: return
+            val reply = IpPacket.buildUdp(serverIp, serverPort, appIp, appPort, nx, nx.size)
+            emit(reply, reply.size)
+        }
+        // UDP hors DNS : jeté silencieusement.
     }
 
     private fun publishLoop() {
@@ -198,15 +280,16 @@ class CaptureVpnService : VpnService(), TunBridge {
         CaptureState.publish()
     }
 
-    /** Ajoute au TUN les serveurs DNS IPv4 du réseau réel ; repli 8.8.8.8. */
-    private fun addLinkDnsServers(builder: Builder) {
+    /** Ajoute au TUN les serveurs DNS du réseau réel (v4, et v6 si routé) ; repli 8.8.8.8. */
+    private fun addLinkDnsServers(builder: Builder, v6: Boolean) {
         var added = 0
         try {
             val lp = cm.getLinkProperties(cm.activeNetwork)
             lp?.dnsServers?.forEach { addr ->
-                if (addr is Inet4Address) {
-                    val h = addr.hostAddress
-                    if (!h.isNullOrBlank()) { builder.addDnsServer(h); added++ }
+                val ok = addr is Inet4Address || (v6 && addr is Inet6Address && !addr.isLinkLocalAddress)
+                if (ok) {
+                    val h = addr.hostAddress?.substringBefore('%')
+                    if (!h.isNullOrBlank()) { runCatching { builder.addDnsServer(h); added++ } }
                 }
             }
         } catch (e: Exception) {
@@ -214,6 +297,15 @@ class CaptureVpnService : VpnService(), TunBridge {
         }
         if (added == 0) builder.addDnsServer("8.8.8.8")
     }
+
+    /** Le réseau réel a-t-il une IPv6 globale (ni link-local, ni ULA, ni loopback) ? */
+    private fun hasGlobalIpv6(): Boolean = runCatching {
+        cm.getLinkProperties(cm.activeNetwork)?.linkAddresses?.any { la ->
+            val a = la.address
+            a is Inet6Address && !a.isLinkLocalAddress && !a.isLoopbackAddress &&
+                !a.isSiteLocalAddress && (a.address[0].toInt() and 0xFE) != 0xFC
+        } ?: false
+    }.getOrDefault(false)
 
     private fun resolveUid(proto: Int, appIp: String, appPort: Int, serverIp: String, serverPort: Int): Int {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return -1

@@ -11,7 +11,7 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * Chaque flux (appPort → serverIp:serverPort) obtient un [DatagramSocket]
  * « protégé » (hors VPN) connecté au serveur. Un thread lecteur renvoie les
- * réponses vers l'app en reconstruisant un paquet IPv4/UDP. Les datagrammes
+ * réponses vers l'app en reconstruisant un paquet IP/UDP (v4 ou v6). Les datagrammes
  * de l'app arrivent forcément dans l'ordre côté TUN (lien local fiable).
  */
 class UdpForwarder(private val bridge: TunBridge) {
@@ -75,9 +75,10 @@ class UdpForwarder(private val bridge: TunBridge) {
 
     private fun key(appPort: Int, serverIp: String, serverPort: Int) = "$appPort>$serverIp:$serverPort"
 
-    /** Traite un paquet IPv4/UDP sortant (déjà validé comme UDP par le service). */
+    /** Traite un paquet IP/UDP sortant (v4 ou v6, déjà validé par le service). */
     fun handleOutbound(pkt: ByteArray) {
-        val ipHdr = IpPacket.ihl(pkt)
+        val ipHdr = IpPacket.l4Offset(pkt)
+        if (ipHdr < 0) return
         val appIp = IpPacket.srcIp(pkt)
         val serverIp = IpPacket.dstIp(pkt)
         val appPort = IpPacket.u16(pkt, ipHdr)
