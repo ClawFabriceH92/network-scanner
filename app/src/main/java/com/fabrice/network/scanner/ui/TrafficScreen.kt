@@ -452,7 +452,8 @@ fun TrafficScreen(onBack: () -> Unit) {
                                     // Journal technique depuis 1 min avant le début de la session
                                     // (préparation VPN, consentement) ; toutes les lignes, pas
                                     // seulement le moteur de capture (box, scan…) pour le contexte.
-                                    techLogs = com.fabrice.network.scanner.AppLog.lines(sinceMs = (CaptureState.startMs ?: 0L) - 60_000)
+                                    techLogs = com.fabrice.network.scanner.AppLog.lines(sinceMs = (CaptureState.startMs ?: 0L) - 60_000),
+                                    networkContext = networkContextLines(context)
                                 )
                             )
                             shareText(context, text)
@@ -781,3 +782,27 @@ private fun shareText(context: Context, text: String) {
         context.startActivity(Intent.createChooser(intent, "Envoyer le résumé (ChatGPT, Claude, mail…)"))
     }
 }
+
+
+/** Contexte réseau courant pour l'export LLM (réseau où la capture a tourné, en général) — v1.9.44. */
+private fun networkContextLines(context: Context): List<String> = runCatching {
+    val net = com.fabrice.network.scanner.NetworkInfoProvider.read(context)
+    val subnet = com.fabrice.network.scanner.NetworkScanner.detectSubnet()
+    val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+    val caps = runCatching { cm.getNetworkCapabilities(cm.activeNetwork) }.getOrNull()
+    val transport = when {
+        caps == null -> "inconnu"
+        caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) -> "Wi-Fi"
+        caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) -> "mobile"
+        caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) -> "Ethernet"
+        else -> "autre"
+    }
+    buildList {
+        add("Transport : $transport" + (if (caps?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) == true) " (via un VPN)" else ""))
+        if (net.ssid.isNotBlank() && net.ssid != "<unknown ssid>") add("Wi-Fi : ${net.ssid} (${net.bssid}, ${net.band}, ${net.linkSpeedMbps} Mb/s)")
+        subnet?.let { add("Adresse locale : ${it.first}/${it.second}") }
+        if (net.gateway.isNotBlank()) add("Passerelle : ${net.gateway}")
+        if (net.dns.isNotEmpty()) add("DNS du lien : ${net.dns.joinToString(", ")}")
+        add("Heure de l'export : " + java.text.SimpleDateFormat("dd/MM/yyyy HH:mm:ss", java.util.Locale.FRENCH).format(java.util.Date()))
+    }
+}.getOrDefault(emptyList())

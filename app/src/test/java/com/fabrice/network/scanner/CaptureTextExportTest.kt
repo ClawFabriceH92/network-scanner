@@ -20,6 +20,7 @@ class CaptureTextExportTest {
         blockedPackets = 4, rules = listOf(FirewallRules.Rule(FirewallRules.KIND_DOMAIN, "evil.example")),
         blockTrackers = true, allowedApps = emptySet(), ipv6 = false,
         deviceInfo = "Xiaomi 14, Android 15 (API 35), Scan Réseau 1.9.43",
+        networkContext = listOf("Transport : Wi-Fi", "Passerelle : 192.168.0.1"),
         techLogs = listOf("2026-09-21 10:00:00.000 [I] Capture: Démarrage : TUN 10.111.222.1/32", "2026-09-21 10:00:01.000 [W] Capture: Connexion TCP 1.2.3.4:443 impossible")
     )
 
@@ -51,6 +52,11 @@ class CaptureTextExportTest {
         assertTrue(md.contains("### Journal du moteur de capture (2 ligne(s))"))
         assertTrue(md.contains("Connexion TCP 1.2.3.4:443 impossible"))
         assertTrue(md.indexOf("## Logs techniques") < md.indexOf("## Question suggérée"))
+        assertTrue(md.contains("## Contexte réseau\n- Transport : Wi-Fi\n- Passerelle : 192.168.0.1"))
+        assertTrue(md.contains("## Méthode : comment ces informations ont été obtenues"))
+        assertTrue(md.contains("getConnectionOwnerUid"))
+        assertTrue(md.contains("SNI"))
+        assertTrue(md.indexOf("## Méthode") < md.indexOf("## Logs techniques"))
     }
 
     @Test

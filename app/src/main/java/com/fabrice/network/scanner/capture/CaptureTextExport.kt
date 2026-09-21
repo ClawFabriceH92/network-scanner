@@ -27,7 +27,23 @@ object CaptureTextExport {
         /** Description de l'environnement (modèle, Android, version app) — v1.9.43. */
         val deviceInfo: String = "",
         /** Lignes du journal technique (AppLog) de la session — v1.9.43. */
-        val techLogs: List<String> = emptyList()
+        val techLogs: List<String> = emptyList(),
+        /** Contexte réseau au moment de l'export (SSID, passerelle, DNS…) — v1.9.44. */
+        val networkContext: List<String> = emptyList()
+    )
+
+    /** Provenance de chaque donnée, pour que le LLM sache ce qu'il lit — v1.9.44. */
+    val METHOD_LINES: List<String> = listOf(
+        "- Capture : un VpnService Android crée une interface TUN locale (10.111.222.1/32, route 0.0.0.0/0, IPv6 seulement si le réseau a une adresse globale) ; l'app lit chaque paquet IP émis par le téléphone, le journalise (PCAP) puis le RÉÉMET elle-même vers la vraie destination via des sockets TCP/UDP protégés. Le téléphone garde donc Internet, mais tout passe par l'app : aucun contenu n'est déchiffré, seuls les en-têtes sont lus.",
+        "- Connexion : un 5-uplet (protocole, port local, IP distante, port distant) agrégé sur la session. « actif » = flux encore ouvert, « fermé » = FIN/RST vu ou délai d'inactivité UDP (60 s), « bloqué » = refusé par le pare-feu de l'app.",
+        "- Octets : volume des CHARGES UTILES TCP/UDP (en-têtes IP/TCP exclus) ; ↑ = du téléphone vers le distant, ↓ = l'inverse. Les paquets comptent les segments/datagrammes vus dans les deux sens.",
+        "- Application : uid propriétaire du socket demandé à Android (ConnectivityManager.getConnectionOwnerUid, Android 10+) puis libellé du package ; « app inconnue » = uid non résolu (flux très court, système, ou Android < 10). uid 0/1000 = système.",
+        "- Hôte : nom obtenu SANS connexion supplémentaire, par deux voies passives : (1) réponses DNS vues sur le port 53 (table IP → nom) ; (2) champ SNI du ClientHello TLS (nom du site en clair au début de chaque connexion HTTPS). Sans ces indices (DNS chiffré DoH/DoT, IP en dur, ECH), seule l'IP est connue.",
+        "- Classification tracker : correspondance par suffixe du nom d'hôte avec la liste Disconnect Tracking Protection (Publicité, Analytique, Réseau social, Empreinte navigateur, Cryptominage, Pistage e-mail), mise à jour quotidiennement. Un hôte absent de la liste n'est pas forcément sain.",
+        "- Localisation : pays/ville/opérateur de l'IP publique fournis par ipinfo.io (option explicite « GeoIP »), donc précision approximative (opérateur du bloc IP, CDN possible). Vide si l'option est désactivée ou l'IP privée.",
+        "- Pare-feu : règles par application (uid) ou domaine (suffixe) et option « bloquer les trackers » ; un flux bloqué reçoit un RST TCP, une requête DNS bloquée reçoit une réponse NXDOMAIN synthétique, l'UDP est jeté. Le blocage n'existe que pendant la capture.",
+        "- Journal technique : lignes horodatées émises par l'app (tag « Capture » = moteur de capture ; autres tags = scan, box, mises à jour) depuis une minute avant la session.",
+        "- Limites : trafic des autres VPN non visible ; IPv6 absent si le réseau n'en fournit pas ; paquets IPv6 avec en-têtes d'extension ignorés ; la session s'arrête d'elle-même après 30 min ou 200 Mo ; l'app elle-même est exclue de la capture."
     )
 
     /** Plafond de lignes de journal et de connexions brutes dans l'export. */
@@ -45,6 +61,11 @@ object CaptureTextExport {
         sb.appendLine()
         sb.appendLine("Contexte : capture locale via VPN sur un téléphone Android ; chaque « connexion » est un flux TCP/UDP vu depuis le téléphone vers Internet ou le LAN. Aucun contenu n'a été lu, seulement les métadonnées (adresses, ports, noms DNS/SNI, volumes).")
         sb.appendLine()
+        if (session.networkContext.isNotEmpty()) {
+            sb.appendLine("## Contexte réseau")
+            session.networkContext.forEach { sb.appendLine("- $it") }
+            sb.appendLine()
+        }
         sb.appendLine("## Session")
         session.startMs?.let { sb.appendLine("- Début : ${fmt.format(Date(it))}") }
         val end = session.endMs ?: nowMs
@@ -133,6 +154,11 @@ object CaptureTextExport {
             if (domains.size > 80) sb.appendLine("… et ${domains.size - 80} autres")
             sb.appendLine()
         }
+
+        // ---- Méthode --------------------------------------------------------
+        sb.appendLine("## Méthode : comment ces informations ont été obtenues")
+        METHOD_LINES.forEach { sb.appendLine(it) }
+        sb.appendLine()
 
         // ---- Logs techniques ------------------------------------------------
         sb.appendLine("## Logs techniques")
