@@ -68,8 +68,8 @@ android {
         applicationId = "com.fabrice.network.scanner"
         minSdk = 26
         targetSdk = 35
-        versionCode = 69
-        versionName = "1.9.40"
+        versionCode = 70
+        versionName = "1.9.41"
     }
 
     signingConfigs {
@@ -140,6 +140,11 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.9.1")
     // Verrouillage biométrique (v1.9.0) : BiometricPrompt androidx
     implementation("androidx.biometric:biometric:1.1.0")
+    // ⚠️ biometric 1.1.0 tire fragment 1.2.x, dont FragmentActivity refuse les
+    // codes de requête (> 16 bits) générés par l'API Activity Result → crash
+    // « Can only use lower 16 bits for requestCode » au consentement VPN de la
+    // capture (v1.9.41). Fragment récent = plus de validation.
+    implementation("androidx.fragment:fragment-ktx:1.8.5")
     // Coffre chiffré des secrets box (v1.9.38) : EncryptedSharedPreferences
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
