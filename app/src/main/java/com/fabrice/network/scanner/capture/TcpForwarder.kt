@@ -4,7 +4,9 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
+import com.fabrice.network.scanner.AppLog
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Forwarding TCP en espace utilisateur.
@@ -21,6 +23,14 @@ import java.util.concurrent.ConcurrentHashMap
 class TcpForwarder(private val bridge: TunBridge) {
 
     private val MSS = 1460
+
+    companion object {
+        /** Échecs de connexion sortante sur la session (journal technique). */
+        val connectFailures = AtomicInteger(0)
+        private const val MAX_FAIL_LOGS = 30
+    }
+
+    init { connectFailures.set(0) }
 
     private inner class Conn(
         val appIp: String,
@@ -69,6 +79,9 @@ class TcpForwarder(private val bridge: TunBridge) {
                     s.connect(InetSocketAddress(serverIp, serverPort), 10_000)
                 } catch (e: Exception) {
                     // Connexion refusée / injoignable → RST vers l'app.
+                    val n = connectFailures.incrementAndGet()
+                    if (n <= MAX_FAIL_LOGS) AppLog.w("Capture", "Connexion TCP $serverIp:$serverPort impossible (${e.javaClass.simpleName}: ${e.message}) → RST" +
+                        (if (n == MAX_FAIL_LOGS) " (suite non journalisée)" else ""))
                     synchronized(lock) {
                         if (!closed) {
                             val rst = IpPacket.buildTcp(

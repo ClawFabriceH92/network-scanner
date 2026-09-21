@@ -23,8 +23,16 @@ object CaptureTextExport {
         val rules: List<FirewallRules.Rule>,
         val blockTrackers: Boolean,
         val allowedApps: Set<String>,
-        val ipv6: Boolean
+        val ipv6: Boolean,
+        /** Description de l'environnement (modèle, Android, version app) — v1.9.43. */
+        val deviceInfo: String = "",
+        /** Lignes du journal technique (AppLog) de la session — v1.9.43. */
+        val techLogs: List<String> = emptyList()
     )
+
+    /** Plafond de lignes de journal et de connexions brutes dans l'export. */
+    const val MAX_LOG_LINES = 400
+    const val MAX_RAW_CONNS = 600
 
     /** Limite de lignes par section pour rester digeste (les plus gros flux d'abord). */
     const val MAX_HOSTS_PER_APP = 25
@@ -125,6 +133,37 @@ object CaptureTextExport {
             if (domains.size > 80) sb.appendLine("… et ${domains.size - 80} autres")
             sb.appendLine()
         }
+
+        // ---- Logs techniques ------------------------------------------------
+        sb.appendLine("## Logs techniques")
+        if (session.deviceInfo.isNotBlank()) sb.appendLine("Environnement : ${session.deviceInfo}")
+        sb.appendLine()
+        sb.appendLine("### Connexions brutes (${conns.size})")
+        sb.appendLine("Format : heure_début→heure_fin proto :port_local → ip:port_distant [hôte] app statut ↑octets ↓octets paquets [motif] [classification] [géo]")
+        val tf = SimpleDateFormat("HH:mm:ss", Locale.FRENCH)
+        sb.appendLine("```")
+        conns.sortedBy { it.firstSeenMs }.take(MAX_RAW_CONNS).forEach { c ->
+            sb.append("${tf.format(Date(c.firstSeenMs))}→${tf.format(Date(c.lastSeenMs))} ${c.protocol} :${c.localPort} → ${c.remoteIp}:${c.remotePort}")
+            if (c.hostname.isNotBlank()) sb.append(" [${c.hostname}]")
+            sb.append(" ${c.appLabel.ifBlank { "?" }}" + (if (c.uid >= 0) "(uid ${c.uid})" else ""))
+            sb.append(" ${c.status} ↑${c.bytesOut} ↓${c.bytesIn} ${c.packetsOut}/${c.packetsIn}pk")
+            if (c.blockReason.isNotBlank()) sb.append(" [${c.blockReason}]")
+            if (c.category.isNotBlank()) sb.append(" [${c.category}]")
+            if (c.geo.isNotBlank()) sb.append(" [${c.geo}]")
+            sb.appendLine()
+        }
+        if (conns.size > MAX_RAW_CONNS) sb.appendLine("… ${conns.size - MAX_RAW_CONNS} connexion(s) supplémentaire(s) omise(s)")
+        sb.appendLine("```")
+        sb.appendLine()
+        sb.appendLine("### Journal du moteur de capture (${session.techLogs.size} ligne(s))")
+        if (session.techLogs.isEmpty()) sb.appendLine("Aucune ligne (journal vide ou session non démarrée dans cette instance de l'app).")
+        else {
+            sb.appendLine("```")
+            session.techLogs.takeLast(MAX_LOG_LINES).forEach { sb.appendLine(it) }
+            if (session.techLogs.size > MAX_LOG_LINES) sb.appendLine("… ${session.techLogs.size - MAX_LOG_LINES} ligne(s) plus ancienne(s) omise(s)")
+            sb.appendLine("```")
+        }
+        sb.appendLine()
 
         sb.appendLine("## Question suggérée")
         sb.appendLine("Analyse ces connexions : quelles applications parlent à des services inattendus, quels trackers sont présents, y a-t-il des flux vers des pays ou des hôtes suspects, et que devrais-je bloquer ?")

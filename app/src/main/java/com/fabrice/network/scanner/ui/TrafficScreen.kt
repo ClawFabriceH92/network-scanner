@@ -446,7 +446,13 @@ fun TrafficScreen(onBack: () -> Unit) {
                                     startMs = CaptureState.startMs, endMs = CaptureState.endMs,
                                     packets = packetCount, bytesOut = totalOut, bytesIn = totalIn,
                                     blockedPackets = blockedCount, rules = rules, blockTrackers = blockTrackers,
-                                    allowedApps = allowedPkgs, ipv6 = ipv6
+                                    allowedApps = allowedPkgs, ipv6 = ipv6,
+                                    deviceInfo = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}, Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT}), " +
+                                        "Scan Réseau ${com.fabrice.network.scanner.BuildConfig.VERSION_NAME}",
+                                    // Journal technique depuis 1 min avant le début de la session
+                                    // (préparation VPN, consentement) ; toutes les lignes, pas
+                                    // seulement le moteur de capture (box, scan…) pour le contexte.
+                                    techLogs = com.fabrice.network.scanner.AppLog.lines(sinceMs = (CaptureState.startMs ?: 0L) - 60_000)
                                 )
                             )
                             shareText(context, text)

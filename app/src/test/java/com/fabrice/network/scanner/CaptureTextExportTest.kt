@@ -18,7 +18,9 @@ class CaptureTextExportTest {
     private val session = CaptureTextExport.Session(
         startMs = 1_700_000_000_000, endMs = 1_700_000_090_000, packets = 120, bytesOut = 5000, bytesIn = 20000,
         blockedPackets = 4, rules = listOf(FirewallRules.Rule(FirewallRules.KIND_DOMAIN, "evil.example")),
-        blockTrackers = true, allowedApps = emptySet(), ipv6 = false
+        blockTrackers = true, allowedApps = emptySet(), ipv6 = false,
+        deviceInfo = "Xiaomi 14, Android 15 (API 35), Scan Réseau 1.9.43",
+        techLogs = listOf("2026-09-21 10:00:00.000 [I] Capture: Démarrage : TUN 10.111.222.1/32", "2026-09-21 10:00:01.000 [W] Capture: Connexion TCP 1.2.3.4:443 impossible")
     )
 
     @Test
@@ -41,7 +43,25 @@ class CaptureTextExportTest {
         assertTrue(md.contains("BLOQUÉ (règle evil.example)"))
         assertTrue(md.contains("## Domaines contactés (2)"))
         assertTrue(md.contains("doubleclick.net"))
-        assertTrue(md.contains("## Question suggérée"))
+        assertTrue(md.contains("## Logs techniques"))
+        assertTrue(md.contains("Environnement : Xiaomi 14"))
+        assertTrue(md.contains("### Connexions brutes (3)"))
+        assertTrue(md.contains("TCP :50000 → 93.184.216.34:443 [api.example.com] Mail(uid 10001) actif ↑1000 ↓9000 3/3pk"))
+        assertTrue(md.contains("[règle evil.example]"))
+        assertTrue(md.contains("### Journal du moteur de capture (2 ligne(s))"))
+        assertTrue(md.contains("Connexion TCP 1.2.3.4:443 impossible"))
+        assertTrue(md.indexOf("## Logs techniques") < md.indexOf("## Question suggérée"))
+    }
+
+    @Test
+    fun appLogLinesFilter() {
+        AppLog.clear()
+        AppLog.i("Capture", "a")
+        AppLog.w("Scan", "b")
+        assertEquals(2, AppLog.lines().size)
+        assertEquals(1, AppLog.lines(tags = setOf("Capture")).size)
+        assertTrue(AppLog.lines(tags = setOf("Capture")).first().endsWith("[I] Capture: a"))
+        assertTrue(AppLog.lines(sinceMs = System.currentTimeMillis() + 10_000).isEmpty())
     }
 
     @Test

@@ -47,6 +47,15 @@ object AppLog {
         entries.clear()
     }
 
+    /**
+     * Lignes formatées depuis [sinceMs] (0 = toutes), éventuellement limitées
+     * aux [tags] donnés — pour l'export texte de la capture (v1.9.43).
+     */
+    @Synchronized
+    fun lines(sinceMs: Long = 0L, tags: Set<String>? = null): List<String> =
+        entries.filter { it.ts >= sinceMs && (tags == null || it.tag in tags) }
+            .map { e -> "${timeFormat.format(Date(e.ts))} [${e.level.label}] ${e.tag}: ${e.msg}" }
+
     /** Export texte complet (format stable, lisible, trié chronologiquement). */
     @Synchronized
     fun dump(): String = buildString {

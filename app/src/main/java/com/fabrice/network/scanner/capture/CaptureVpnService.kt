@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.system.OsConstants
 import androidx.core.app.NotificationCompat
+import com.fabrice.network.scanner.AppLog
 import com.fabrice.network.scanner.MainActivity
 import com.fabrice.network.scanner.R
 import java.io.File
@@ -45,6 +46,9 @@ class CaptureVpnService : VpnService(), TunBridge {
         const val ACTION_START = "com.fabrice.network.scanner.capture.START"
         const val ACTION_STOP = "com.fabrice.network.scanner.capture.STOP"
         private const val CHANNEL_ID = "capture_vpn"
+        private const val TAG = "Capture"
+        /** Nombre max de blocages journalisés par session (évite d'inonder le journal). */
+        private const val MAX_BLOCK_LOGS = 30
         private const val NOTIF_ID = 4242
         private const val TUN_ADDR = "10.111.222.1"
         private const val TUN_ADDR6 = "fd00:6e65:7473:6361::1"
@@ -71,6 +75,7 @@ class CaptureVpnService : VpnService(), TunBridge {
     private var readerThread: Thread? = null
     private var publisherThread: Thread? = null
     @Volatile private var captureStartMs = 0L
+    @Volatile private var blockedLogged = 0
 
     private val cm by lazy { getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager }
     private val uidCache = ConcurrentHashMap<String, Int>()
@@ -99,6 +104,9 @@ class CaptureVpnService : VpnService(), TunBridge {
         if (v6) {
             runCatching { builder.addAddress(TUN_ADDR6, 128); builder.addRoute("::", 0) }
         }
+        AppLog.i(TAG, "Démarrage : TUN $TUN_ADDR/32 route 0.0.0.0/0" +
+            (if (v6) " + $TUN_ADDR6/128 route ::/0" else " (IPv6 ${if (CapturePrefs.ipv6(this)) "sans adresse globale" else "désactivé"})") +
+            " MTU $MTU")
         // DNS : réutilise les serveurs DNS du réseau réel au lieu de forcer
         // 8.8.8.8 — préserve la résolution des noms locaux (mafreebox.freebox.fr,
         // *.local, box) et évite de détourner tout le DNS vers Google.
@@ -110,24 +118,32 @@ class CaptureVpnService : VpnService(), TunBridge {
             runCatching { builder.addAllowedApplication(pkg); allowedAdded++ }
         }
         if (allowedAdded == 0) runCatching { builder.addDisallowedApplication(packageName) }
+        AppLog.i(TAG, if (allowedAdded > 0) "Filtre : $allowedAdded application(s) capturée(s)" else "Toutes les applications capturées (sauf l'app elle-même)")
         // Pare-feu + classification trackers + GeoIP (opt-in).
         FirewallRuntime.apply(this)
         val trackers = TrackerDatabase.load(this)
         CaptureState.trackerLookup = { h -> trackers.lookup(h)?.label }
         CaptureState.geoEnabled = CapturePrefs.geo(this)
+        AppLog.i(TAG, "Pare-feu : ${FirewallRuntime.blockedUids.size} app(s) bloquée(s), ${FirewallRuntime.blockedDomains.size} domaine(s), " +
+            "trackers ${if (FirewallRuntime.blockTrackers) "bloqués" else "autorisés"} (base ${trackers.count} domaines du ${trackers.generated.ifBlank { "?" }}), " +
+            "GeoIP ${if (CaptureState.geoEnabled) "ON" else "OFF"}")
+        blockedLogged = 0
 
         val fd = try {
             builder.establish()
         } catch (e: Exception) {
+            AppLog.e(TAG, "Échec establish() : ${e.javaClass.simpleName} ${e.message}")
             CaptureState.setError("Échec établissement VPN : ${e.message}")
             stopSelf()
             return
         }
         if (fd == null) {
+            AppLog.e(TAG, "establish() a renvoyé null (consentement VPN manquant ou autre VPN actif)")
             CaptureState.setError("VPN refusé par le système")
             stopSelf()
             return
         }
+        AppLog.i(TAG, "TUN établi (fd ${fd.fd})")
         tun = fd
         inStream = FileInputStream(fd.fileDescriptor)
         outStream = FileOutputStream(fd.fileDescriptor)
@@ -136,7 +152,10 @@ class CaptureVpnService : VpnService(), TunBridge {
         // exposé via FileProvider (files-path "captures/").
         val dir = File(filesDir, "captures").apply { mkdirs() }
         val pcapFile = File(dir, "capture_${System.currentTimeMillis()}.pcap")
-        pcap = try { PcapWriter(pcapFile) } catch (e: Exception) { null }
+        pcap = try { PcapWriter(pcapFile) } catch (e: Exception) {
+            AppLog.w(TAG, "PCAP non ouvert : ${e.message}"); null
+        }
+        AppLog.i(TAG, "PCAP : ${pcap?.file?.name ?: "aucun"}")
 
         tcp = TcpForwarder(this)
         udp = UdpForwarder(this)
@@ -197,6 +216,11 @@ class CaptureVpnService : VpnService(), TunBridge {
             val reason = firewallReason(uid, proto, serverIp, serverPort, buf, payloadOff, payloadLen)
             if (reason != null) {
                 CaptureState.onBlocked(protoName, appPort, serverIp, serverPort, now, uid, labelFor(uid), reason)
+                if (blockedLogged < MAX_BLOCK_LOGS) {
+                    blockedLogged++
+                    AppLog.i(TAG, "Bloqué ($reason) : ${labelFor(uid)} $protoName :$appPort → $serverIp:$serverPort" +
+                        (if (blockedLogged == MAX_BLOCK_LOGS) " (suite des blocages non journalisée)" else ""))
+                }
                 blockPacket(proto, buf, l4, appIp, appPort, serverIp, serverPort, payloadOff, payloadLen)
                 continue
             }
@@ -271,6 +295,7 @@ class CaptureVpnService : VpnService(), TunBridge {
                 val reason = if (bytes >= MAX_CAPTURE_BYTES)
                     "taille max (${MAX_CAPTURE_BYTES / (1024 * 1024)} Mo)"
                 else "durée max (${MAX_CAPTURE_MS / 60_000} min)"
+                AppLog.w(TAG, "Arrêt automatique : $reason")
                 CaptureState.setNotice("Capture arrêtée automatiquement : $reason atteinte.")
                 stopCapture()
                 stopSelf()
@@ -357,6 +382,9 @@ class CaptureVpnService : VpnService(), TunBridge {
     private fun stopCapture() {
         if (!running && tun == null) return
         running = false
+        AppLog.i(TAG, "Arrêt : ${CaptureState.packetCount.value} paquets, ↑${CaptureState.totalOut.value} ↓${CaptureState.totalIn.value} octets, " +
+            "${CaptureState.connections.value.size} connexions affichées, ${CaptureState.blockedCount.value} bloqué(s), " +
+            "PCAP ${pcap?.bytesWritten ?: 0} octets, échecs de connexion TCP ${TcpForwarder.connectFailures.get()}")
         CaptureState.setRunning(false)
         runCatching { if (::tcp.isInitialized) tcp.closeAll() }
         runCatching { if (::udp.isInitialized) udp.closeAll() }
@@ -376,6 +404,7 @@ class CaptureVpnService : VpnService(), TunBridge {
 
     override fun onRevoke() {
         // L'utilisateur (ou un autre VPN) a révoqué notre autorisation.
+        AppLog.w(TAG, "Autorisation VPN révoquée (autre VPN démarré ?)")
         stopCapture()
         stopSelf()
         super.onRevoke()
