@@ -56,6 +56,7 @@ import com.fabrice.network.scanner.CsvExporter
 import com.fabrice.network.scanner.capture.AppTrafficMonitor
 import com.fabrice.network.scanner.capture.CapturePrefs
 import com.fabrice.network.scanner.capture.CaptureState
+import com.fabrice.network.scanner.capture.CaptureTextExport
 import com.fabrice.network.scanner.capture.CaptureVpnService
 import com.fabrice.network.scanner.capture.FirewallRules
 import com.fabrice.network.scanner.capture.GeoCache
@@ -437,7 +438,19 @@ fun TrafficScreen(onBack: () -> Unit) {
                         horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("Connexions (${connections.size})", fontWeight = FontWeight.Bold,
                             style = MaterialTheme.typography.titleSmall)
-                        TextButton(onClick = { exportConnectionsCsv(context, connections) }) { Text("Export CSV") }
+                        TextButton(onClick = { exportConnectionsCsv(context, connections) }) { Text("CSV") }
+                        TextButton(onClick = {
+                            val text = CaptureTextExport.build(
+                                connections,
+                                CaptureTextExport.Session(
+                                    startMs = CaptureState.startMs, endMs = CaptureState.endMs,
+                                    packets = packetCount, bytesOut = totalOut, bytesIn = totalIn,
+                                    blockedPackets = blockedCount, rules = rules, blockTrackers = blockTrackers,
+                                    allowedApps = allowedPkgs, ipv6 = ipv6
+                                )
+                            )
+                            shareText(context, text)
+                        }) { Text("🤖 Texte LLM") }
                     }
                     val trackers = connections.count { it.category.isNotBlank() }
                     val blocked = connections.count { it.blocked }
@@ -733,5 +746,32 @@ private fun exportConnectionsCsv(context: Context, conns: List<CaptureState.Conn
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         context.startActivity(Intent.createChooser(intent, "Exporter les connexions"))
+    }
+}
+
+
+/**
+ * Export texte (Markdown) pour un LLM : copié dans le presse-papiers ET proposé
+ * au partage (fichier .md via FileProvider, pour les gros résumés) — v1.9.42.
+ */
+private fun shareText(context: Context, text: String) {
+    runCatching {
+        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("Capture réseau", text))
+        android.widget.Toast.makeText(context, "Résumé copié dans le presse-papiers", android.widget.Toast.LENGTH_SHORT).show()
+    }
+    runCatching {
+        val dir = File(context.filesDir, "exports").apply { mkdirs() }
+        val file = File(dir, "capture_llm_${System.currentTimeMillis()}.md")
+        file.writeText(text, Charsets.UTF_8)
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/markdown"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_TEXT, text.take(100_000))
+            putExtra(Intent.EXTRA_SUBJECT, "Capture réseau — résumé pour analyse")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, "Envoyer le résumé (ChatGPT, Claude, mail…)"))
     }
 }

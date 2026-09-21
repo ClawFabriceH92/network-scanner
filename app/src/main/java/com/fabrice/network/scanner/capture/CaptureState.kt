@@ -95,6 +95,10 @@ object CaptureState {
     private val _totalIn = MutableStateFlow(0L)
     val totalIn: StateFlow<Long> = _totalIn.asStateFlow()
 
+    /** Début / fin de la session (ms epoch) pour l'export texte — v1.9.42. */
+    @Volatile var startMs: Long? = null
+    @Volatile var endMs: Long? = null
+
     private val _pcapPath = MutableStateFlow<String?>(null)
     val pcapPath: StateFlow<String?> = _pcapPath.asStateFlow()
 
@@ -112,7 +116,10 @@ object CaptureState {
     private val _notice = MutableStateFlow<String?>(null)
     val notice: StateFlow<String?> = _notice.asStateFlow()
 
-    fun setRunning(on: Boolean) { _running.value = on }
+    fun setRunning(on: Boolean) {
+        _running.value = on
+        if (on) { startMs = System.currentTimeMillis(); endMs = null } else if (startMs != null) endMs = System.currentTimeMillis()
+    }
     fun setPcapPath(path: String?) { _pcapPath.value = path }
     fun setError(msg: String?) { _error.value = msg }
     fun setNotice(msg: String?) { _notice.value = msg }
