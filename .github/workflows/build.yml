@@ -19,6 +19,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Un workflow invalide (ex. « : » nu dans un run:) est refusé par GitHub
+      # en silence et le cron CVE s'arrête — on le détecte ici, à chaque build.
+      - name: Validate workflow YAML
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 - <<'PY'
+          import glob, sys, yaml
+          bad = 0
+          for f in sorted(glob.glob(".github/workflows/*.yml")):
+              try:
+                  yaml.safe_load(open(f, encoding="utf-8"))
+                  print("OK  ", f)
+              except Exception as e:
+                  bad += 1
+                  print("FAIL", f, "->", e)
+          sys.exit(1 if bad else 0)
+          PY
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:

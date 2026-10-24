@@ -604,6 +604,7 @@ fun ScannerScreen(onShowOnboarding: () -> Unit = {}) {
         scope.launch {
             cveUpdating = true
             cveUpdateResult = null
+            val before = cveDbVersion ?: CveDatabaseStore.version(context) ?: ""
             val result = withContext(Dispatchers.IO) {
                 CveUpdateManager.update(context)
             }
@@ -612,7 +613,13 @@ fun ScannerScreen(onShowOnboarding: () -> Unit = {}) {
                 CveDatabaseStore.invalidate()
                 cveDbVersion = result.generated
                 cveStale = CveUpdateManager.isStale(result.generated)
-                onResult("Base mise à jour : ${result.generated} (${result.allCount} CVE)")
+                val age = CveUpdateManager.ageDays(result.generated)
+                onResult(
+                    if (result.generated == before && age != null && age > CveUpdateManager.STALE_DAYS)
+                        "La base en ligne n'est pas plus récente (générée le ${result.generated}, il y a $age j) : " +
+                            "la régénération côté serveur ne tourne pas — signale-le."
+                    else "Base mise à jour : ${result.generated} (${result.allCount} CVE)"
+                )
             } else {
                 onResult("Échec de la mise à jour (réseau ou base indisponible)")
             }
